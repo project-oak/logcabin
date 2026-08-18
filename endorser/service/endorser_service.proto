@@ -1,0 +1,370 @@
+//
+// Copyright 2026 The LogCabin Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package logcabin.proto;
+
+import "endorser/service/endorser_entities.proto";
+import "proto/attestation/evidence.proto";
+import "proto/micro_rpc/options.proto";
+
+// LogCabin endorser service served by the enclave app.
+//
+// The service can manage multiple core endorser state machines,
+// each identified by the SHA-256 digest of its public (verifying) key.
+//
+// Several operations return signatures. Signatures are formatted
+// according to the type of verifying key declared by each endorser.
+// At the moment, only ECDSA P-256 is supported.
+//
+service EndorserService {
+  // Gets the TEE attestation evidence.
+  // method_id: 1771
+  rpc GetEvidence(GetEvidenceRequest) returns (GetEvidenceResponse) {
+    option (.oak.micro_rpc.method_id) = 1771;
+  }
+
+  // method_id: 4001
+  // Creates a new uninitialized endorser with a random key pair.
+  // The server can hold at most MAX_ENDORSERS endorsers (across all states).
+  // Error modes:
+  //   - If MAX_ENDORSERS is exceeded, returns FailedPrecondition.
+  rpc CreateEndorser(CreateEndorserRequest) returns (Endorser) {
+    option (.oak.micro_rpc.method_id) = 4001;
+  }
+
+  // method_id: 4002
+  // Lists endorsers managed by this service.
+  // By default, only uninitialized and active endorsers are returned. Set
+  // `include_finalized` to true to also include recently finalized endorsers
+  // still held in the service's recovery queue.
+  // Note: the `state` field of the returned Endorser messages is not populated;
+  // use GetEndorser to retrieve state-specific metadata and receipts.
+  rpc ListEndorsers(ListEndorsersRequest) returns (ListEndorsersResponse) {
+    option (.oak.micro_rpc.method_id) = 4002;
+  }
+
+  // method_id: 4003
+  // Returns a single endorser by alias.
+  // This RPC supports crash recovery: if a coordinator activates or finalizes
+  // an endorser but crashes before persisting the receipt, call GetEndorser to
+  // retrieve the lost receipt.
+  // Error modes:
+  //   - If the endorser does not exist, returns NotFound.
+  rpc GetEndorser(GetEndorserRequest) returns (Endorser) {
+    option (.oak.micro_rpc.method_id) = 4003;
+  }
+
+  // method_id: 4004
+  // Activates the endorser.
+  // The endorser adopts the supplied config, checking that its own public
+  // (verifying) key is in it, and transitions to the "Active" state.
+  //
+  // The behaviour depends on the optional `prev_cohort_finalization` field:
+  //
+  // ## When `prev_cohort_finalization` is absent (new instance)
+  //
+  // Used when starting a new service instance with no prior cohort or state.
+  // The endorser computes the instance_id as SHA-256(new_config) and creates
+  // a default ledger (ledger_id = 0) with all-zero entry, index 0, and
+  // all-zero hash_chain_tail. No external verification data is needed.
+  //
+  // ## When `prev_cohort_finalization` is present (reconfiguration)
+  //
+  // Used when reconfiguring from a previous cohort. The endorser performs the
+  // following additional verifications before activating:
+  //
+  //   1. Finalization receipt verification: The endorser reconstructs the
+  //      expected finalization message that each member of the *previous*
+  //      cohort should have signed during FinalizeEndorser:
+  //
+  //        "finalize" || instance_id || prev_config_id || new_config_id ||
+  //        num_ledgers (4 bytes, BE) || ledger items...
+  //
+  //      where prev_config_id is derived from the finalization endorser keys,
+  //      new_config_id is derived from new_config, and ledger items are the
+  //      finalized ledger states. It then verifies each finalization receipt
+  //      signature against the corresponding endorser's verifying key.
+  //
+  //   2. Quorum check: A strict majority (> n/2) of the previous cohort's
+  //      endorsers must have provided valid (cryptographically verified)
+  //      finalization receipts. Entries with missing or invalid receipts
+  //      (e.g., endorsers that crashed before finalizing) are counted as
+  //      non-votes. If the quorum is not met, activation fails.
+  //
+  // On success with prev_cohort_finalization the endorser adopts the
+  // instance_id, the finalized ledger states, and records both the previous
+  // and new cohort configs. It does NOT create a default ledger — it uses
+  // the ledgers from the finalization data.
+  //
+  // Error modes:
+  //   - If the endorser does not exist, returns status NotFound.
+  //   - If the endorser is already activated or finalized, returns
+  //     FailedPrecondition.
+  //   - If new_config is missing or empty, returns InvalidArgument.
+  //   - If new_config contains more than MAX_COHORT_SIZE (200) keys, returns
+  //     InvalidArgument.
+  //   - If new_config keys are not in strict ascending SEC1-lexicographic
+  //     order, returns InvalidArgument.
+  //   - If the endorser's public key is not in the new config, returns
+  //     InvalidArgument.
+  //   - Additionally, when `prev_cohort_finalization` is present:
+  //     - If instance_id is not exactly 32 bytes, returns InvalidArgument.
+  //     - If endorser finalization keys are not in strict ascending
+  //       SEC1-lexicographic order, returns InvalidArgument.
+  //     - If ledgers is larger than MAX_LEDGERS, returns InvalidArgument.
+  //     - If not enough valid finalization receipts to make a quorum (strict
+  //       majority) are provided, returns InvalidArgument.
+  rpc ActivateEndorser(ActivateEndorserRequest) returns (ActivateEndorserResponse) {
+    option (.oak.micro_rpc.method_id) = 4004;
+  }
+
+  // method_id: 4005
+  // Creates a new ledger. The ledger state is initialised as follows:
+  //   - tail <- 0 (32 bytes)
+  //   - height <- 0
+  //   - latest_entry <- 0 (32 bytes)
+  // Error modes:
+  //   - If the endorser does not exist, returns NotFound.
+  //   - If the endorser is not activated (uninitialized or finalized),
+  //     returns FailedPrecondition.
+  //   - If the ledger already exists, returns FailedPrecondition.
+  //   - If the endorser already has MAX_LEDGERS (100) ledgers, returns
+  //     FailedPrecondition.
+  rpc CreateLedger(CreateLedgerRequest) returns (CreateLedgerResponse) {
+    option (.oak.micro_rpc.method_id) = 4005;
+  }
+
+  // method_id: 4006
+  // Appends a new entry to a ledger. The ledger state is updated as follows:
+  //   - tail <- SHA256(tail || latest_entry)
+  //   - height <- height + 1
+  //   - latest_entry <- request.entry
+  // Error modes:
+  //   - If the endorser does not exist, returns NotFound.
+  //   - If the endorser is not activated (uninitialized or finalized),
+  //     returns FailedPrecondition.
+  //   - If the ledger does not exist in the endorser, returns NotFound.
+  //   - If the expected index does not match height+1 (maybe another entry was
+  //     added since the last read), returns FailedPrecondition.
+  //   - If the payload is not exactly 32 bytes, returns InvalidArgument.
+  rpc AppendEntry(AppendEntryRequest) returns (AppendEntryResponse) {
+    option (.oak.micro_rpc.method_id) = 4006;
+  }
+
+  // method_id: 4007
+  // Reads the latest entry from a ledger.
+  // Error modes:
+  //   - If the endorser does not exist, returns NotFound.
+  //   - If the endorser is not activated (uninitialized or finalized),
+  //     returns FailedPrecondition.
+  //   - If the ledger does not exist in the endorser, returns NotFound.
+  //   - If the nonce is zero, returns InvalidArgument.
+  rpc ReadLatest(ReadLatestRequest) returns (ReadLatestResponse) {
+    option (.oak.micro_rpc.method_id) = 4007;
+  }
+
+  // method_id: 4008
+  // Finalizes the endorser. Produces a finalization receipt. The endorser can
+  // no longer be used and its signing key is securely erased.
+  // Error modes:
+  //   - If the endorser does not exist, returns NotFound.
+  //   - If the endorser is not activated (uninitialized or finalized),
+  //     returns FailedPrecondition.
+  //   - If next_cohort_config is missing or empty, returns InvalidArgument.
+  //   - If next_cohort_config contains more than MAX_COHORT_SIZE (200) keys,
+  //     returns InvalidArgument.
+  //   - If next_cohort_config keys are not in strict ascending
+  //     SEC1-lexicographic order, returns InvalidArgument.
+  rpc FinalizeEndorser(FinalizeEndorserRequest) returns (FinalizeEndorserResponse) {
+    option (.oak.micro_rpc.method_id) = 4008;
+  }
+}
+
+message GetEvidenceRequest {}
+
+message GetEvidenceResponse {
+  // DICE attestation evidence of including endorser binary.
+  oak.attestation.v1.Evidence evidence = 1;
+}
+
+message CreateEndorserRequest {}
+
+message ListEndorsersRequest {
+  // If true, include recently finalized endorsers held in the recovery queue.
+  bool include_finalized = 1;
+}
+
+message ListEndorsersResponse {
+  // All endorsers matching the request criteria.
+  repeated Endorser endorsers = 1;
+}
+
+message GetEndorserRequest {
+  // Endorser alias as returned by CreateEndorser.
+  fixed64 endorser_alias = 1;
+}
+
+message ActivateEndorserRequest {
+  // Endorser alias as returned by CreateEndorser.
+  fixed64 endorser_alias = 1;
+
+  // The new cohort config to adopt.
+  CohortConfig new_config = 2;
+
+  // Optional takeover data from a previous cohort. If absent, the
+  // endorser is activated as a new instance (instance_id derived from
+  // new_config). If present, the endorser is activated via reconfiguration.
+  CohortTakeOver prev_cohort_takeover = 4;
+}
+
+message ActivateEndorserResponse {
+  // Signature that confirms the endorser was activated. The endorser
+  // has committed to the given cohort config and set initial ledger data.
+  // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
+  //
+  //   "activate" (utf-8) || instance_id (32 bytes)
+  //
+  // plus the following fields concatenated only when activating from a
+  // previous cohort (prev_cohort_finalization present):
+  //
+  //   prev_config_id (32 bytes) || new_config_id (32 bytes) ||
+  //   num_ledgers (4 bytes, big endian) || ledgers (see below).
+  //
+  // Where each ledger item is serialized as:
+  //
+  //   ledger_id (u32, big endian) || entry (32 bytes) || index (u64, big endian) ||
+  //   hash_chain_tail (32 bytes)
+  //
+  // Ledger items are serialized in ascending ledger_id order.
+  //
+  // See CohortConfig for the definition of instance_id.
+  bytes activation_receipt = 1;
+}
+
+message CreateLedgerRequest {
+  // Endorser alias as returned by CreateEndorser.
+  fixed64 endorser_alias = 1;
+
+  // Client-supplied ledger identifier.
+  fixed32 ledger_id = 2;
+}
+
+message CreateLedgerResponse {
+  // Signature that confirms the endorser created the ledger.
+  // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
+  //
+  //   "create_ledger" (utf-8) || instance_id (32 bytes) || ledger_id (4 bytes, big endian)
+  //
+  // See CohortConfig for the definition of instance_id.
+  bytes create_ledger_receipt = 1;
+}
+
+message AppendEntryRequest {
+  // Endorser alias as returned by CreateEndorser.
+  fixed64 endorser_alias = 1;
+
+  // Ledger to append to.
+  fixed32 ledger_id = 2;
+
+  // The payload of the entry to append. Must be exactly 32 bytes.
+  // For payloads larger than 32 bytes, clients should submit a hash.
+  bytes entry = 3;
+
+  // The expected index of the entry in the ledger.
+  uint64 expected_index = 4;
+}
+
+message AppendEntryResponse {
+  // Signature that confirms the endorser appended the entry.
+  // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
+  //
+  //   "append_entry" (utf-8) || instance_id ||
+  //   ledger_id (4 bytes, big endian) || entry (32 bytes) || index (uint64, big endian) ||
+  //   hash_chain_tail (32 bytes)
+  //
+  // Where index is the index of the new entry and matches expected_index if
+  // append successful. See CohortConfig for the definition of instance_id.
+  bytes append_entry_receipt = 1;
+}
+
+message ReadLatestRequest {
+  // Endorser alias as returned by CreateEndorser.
+  fixed64 endorser_alias = 1;
+
+  // Ledger to read.
+  fixed32 ledger_id = 2;
+
+  // 8-byte random nonce to prevent replay attacks. Must not be 0.
+  fixed64 nonce = 3;
+}
+
+message ReadLatestResponse {
+  // The latest block state of the requested ledger.
+  LedgerBlock block = 1;
+
+  // Signature by endorser proving authenticity.
+  // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
+  //
+  //   "read_latest" (utf-8) || instance_id ||
+  //   ledger_id (4 bytes, big endian) || block.entry (32 bytes) ||
+  //   block.index (uint64, big endian) || block.hash_chain_tail (32 bytes) || nonce (fixed64, big endian)
+  //
+  // See CohortConfig for the definition of instance_id.
+  bytes read_signature = 4;
+}
+
+message FinalizeEndorserRequest {
+  // Endorser alias as returned by CreateEndorser.
+  fixed64 endorser_alias = 1;
+
+  // The next cohort for which this endorser is finalizing.
+  CohortConfig next_cohort_config = 2;
+}
+
+message FinalizeEndorserResponse {
+  // The verifying (public) key of the finalized endorser.
+  //
+  // Returned for convenience: the caller may already know the key, but
+  // including it here makes it easy to construct EndorserFinalization
+  // entries for the next cohort's activation without a separate lookup.
+  VerifyingKey endorser_key = 1;
+
+  // Current state of all ledgers in the endorser at finalization time,
+  // in ascending ledger_id order.
+  // Note: if we scale up the number of ledgers significantly, then in order
+  // to reduce network traffic, the coordinator can send the endorser a hash
+  // of what it thinks should be the endorser's ledger state, and the endorser
+  // can fill this field in only if the hash doesn't match.
+  repeated Ledger ledgers = 2;
+
+  // Signature that confirms the endorser was finalized and its signing key
+  // deleted. Format: SHA256 with ECDSA P-256 RAW (R || S), over:
+  //
+  //   "finalize" (utf-8) || instance_id (32 bytes) ||
+  //   cohort_config_id (32 bytes) || next_cohort_config_id (32 bytes) ||
+  //   num_ledgers (4 bytes, big endian) || ledgers (see below).
+  //
+  // Where each ledger item is serialized as:
+  //
+  //   ledger_id (u32, big endian) || entry (32 bytes) || index (u64, big endian) ||
+  //   hash_chain_tail (32 bytes)
+  //
+  // Ledger items are serialized in ascending ledger_id order.
+  //
+  // See CohortConfig for the definition of instance_id.
+  bytes finalization_receipt = 3;
+}

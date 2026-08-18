@@ -1,0 +1,171 @@
+//
+// Copyright 2026 The LogCabin Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package logcabin.proto;
+
+message Endorser {
+  // Server-assigned endorser alias. Identifies the endorser in this server.
+  // Computed as the first 8 bytes (big-endian uint64) of
+  // SHA-256(verifying_key bytes). Clients should treat this as an opaque
+  // handle and pass it back in subsequent requests.
+  fixed64 alias = 3;
+
+  // Public (verifying) key of the endorser.
+  // Once set, an endorser never changes its signing keys.
+  VerifyingKey verifying_key = 1;
+
+  // Signature over the verifying_key bytes using the session private signing
+  // key in the evidence. This binds the endorser's verifying key to the
+  // attested enclave instance.
+  bytes verifying_key_signature = 2;
+
+  // State-specific metadata. Populated by CreateEndorser and GetEndorser.
+  // Not populated by ListEndorsers.
+  oneof state {
+    UninitializedState uninitialized = 4;
+    ActiveState active = 5;
+    FinalizedState finalized = 6;
+  }
+}
+
+// State metadata for an endorser that has been created but not yet activated.
+message UninitializedState {}
+
+// State metadata for an endorser that is activated and actively serving.
+message ActiveState {
+  // Instance ID. Identifies the service instance across cohort transitions.
+  // See CohortConfig for the definition of instance_id. Exactly 32 bytes.
+  bytes instance_id = 1;
+
+  // Activation receipt: signature over the activation message.
+  // Exactly 64 bytes. See ActivateEndorser.
+  bytes activation_receipt = 2;
+}
+
+// State metadata for an endorser that has been finalized. The signing key
+// has been erased and the endorser can no longer sign, but its receipts
+// are available for recovery.
+message FinalizedState {
+  // Instance ID. Identifies the service instance across cohort transitions.
+  // See CohortConfig for the definition of instance_id. Exactly 32 bytes.
+  bytes instance_id = 1;
+
+  // Activation receipt: signature over the activation message.
+  // Exactly 64 bytes. See ActivateEndorser.
+  bytes activation_receipt = 2;
+
+  // Finalization receipt: signature over the finalization message.
+  // Exactly 64 bytes. See FinalizeEndorser.
+  bytes finalization_receipt = 3;
+}
+
+// A ledger, identified by its ID, mapped to its tail state block.
+message Ledger {
+  // Client supplied ledger ID.
+  fixed32 ledger_id = 1;
+
+  // The latest block in this ledger.
+  LedgerBlock tail = 2;
+}
+
+// The tail state of a single append-only ledger.
+message LedgerBlock {
+  // Latest entry contents. Exactly 32 bytes long.
+  bytes entry = 1;
+
+  // Index of this block in the ledger (aka height of the ledger).
+  uint64 index = 2;
+
+  // Cumulative tail of the hash chain. Exactly 32 bytes long.
+  // SHA-256(prev_tail || prev_entry).
+  bytes hash_chain_tail = 3;
+}
+
+// A cohort config is made of the public keys of the endorsers in the cohort.
+//
+// IMPORTANT: Keys MUST be in strict ascending SEC1-lexicographic order.
+// This ensures uniqueness (no duplicate keys) and makes config_id
+// deterministic for a given set of endorsers. The coordinator is
+// responsible for sorting keys before distributing.
+//
+// Definition of config_id: The endorser computes it as the SHA-256 of the
+// concatenation of the raw bytes of the sorted keys. Exactly 32 bytes.
+// NOTE: the endorser will verify that keys are sorted but won't sort them.
+//
+// Definition of instance_id: the config_id of the first cohort in the
+// service instance. During handoff, this instance id is passed from one
+// cohort to the next.
+message CohortConfig {
+  // Public (verifying) keys in the cohort. Max MAX_COHORT_SIZE keys.
+  // MUST be in strict ascending SEC1-lexicographic order.
+  repeated VerifyingKey endorser_keys = 1;
+}
+
+// Public (verifying) part of the key used by the endorser for signing.
+message VerifyingKey {
+  oneof key {
+    // SEC1 uncompressed encoded ECDSA P-256 public key. Exactly 65 bytes.
+    // https://www.secg.org/sec1-v2.pdf.
+    bytes ecdsa = 1;
+  }
+}
+
+// Finalization receipts from the previous cohort.
+//
+// Contains the endorser keys and their optional finalization receipt
+// signatures. Does not include instance_id or ledger state — those
+// are part of CohortTakeOver.
+message CohortFinalization {
+  // Finalization data from each endorser in the previous cohort. There must
+  // be exactly 1 entry for each endorser in the previous cohort config.
+  // The endorser keys MUST be in strict ascending SEC1-lexicographic order
+  // (matching the sorted config requirement). The activating endorser will
+  // infer the old cohort config from these entries.
+  repeated EndorserFinalization endorser_finalizations = 1;
+}
+
+// Complete takeover data from a previous cohort, used to activate a new
+// cohort. Combines finalization receipts with the instance identity and
+// the full ledger state.
+message CohortTakeOver {
+  // The instance_id inherited from the previous cohort. Exactly 32 bytes.
+  // See CohortConfig for the definition of instance_id.
+  bytes instance_id = 1;
+
+  // The complete state of all ledgers at finalization. Must match the data
+  // from FinalizeEndorser by a majority of previous cohort endorsers.
+  repeated Ledger ledgers = 2;
+
+  // Finalization receipts from the outgoing cohort.
+  CohortFinalization cohort_finalization = 3;
+}
+
+// Finalization data from a single endorser in the outgoing cohort.
+message EndorserFinalization {
+  // Verifying key of the endorser in the finalized cohort.
+  // In a CohortFinalization or CohortTakeOver message, the endorser keys
+  // across all EndorserFinalization entries MUST be in strict ascending
+  // SEC1-lexicographic order.
+  // There MUST be one entry for each endorser in the old cohort, including
+  // those that did not produce a finalization receipt.
+  VerifyingKey endorser_key = 1;
+
+  // Finalization receipt produced by the finalizing endorsers. Empty for
+  // endorsers in the old cohort that did not make a finalization receipt.
+  // E.g., because they crashed before finalizing.
+  optional bytes receipt = 2;
+}

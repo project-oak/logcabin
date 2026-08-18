@@ -1,0 +1,78 @@
+#
+# Copyright 2026 The LogCabin Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+module(name = "logcabin")
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_features", version = "1.39.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "aspect_bazel_lib", version = "2.19.3")
+
+# https://github.com/google/protobuf
+bazel_dep(name = "protobuf", version = "30.0", repo_name = "com_google_protobuf")
+bazel_dep(name = "grpc", version = "1.72.0", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "grpc-java", version = "1.71.0", repo_name = "io_grpc_grpc_java")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_rust", version = "0.68.1")
+bazel_dep(name = "toolchains_llvm", version = "1.6.0")
+
+# Depend on Oak for shared toolchains and crates.
+bazel_dep(name = "oak", version = "0.0.0")
+local_path_override(
+    module_name = "oak",
+    path = "../oak",
+)
+
+##### Rust Toolchain Setup #####
+# Use Oak's Rust toolchain to ensure version consistency with the main Oak
+# project. This avoids potential issues from mismatched Rust versions when
+# depending on Oak crates.
+
+oak_rust = use_extension("@oak//bazel/rust:extensions.bzl", "rust_toolchains")
+use_repo(
+    oak_rust,
+    "oak_rust_linux__x86_64-unknown-linux-gnu__nightly",
+)
+
+register_toolchains(
+    "@oak_rust_linux__x86_64-unknown-linux-gnu__nightly//:all",
+)
+
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
+llvm.toolchain(
+    name = "llvm_toolchain",
+    link_flags = {
+        "none-x86_64": [
+            "-nostdlib",
+        ],
+    },
+    llvm_version = "20.1.0",
+)
+use_repo(llvm, "llvm_toolchain")
+
+register_toolchains("@llvm_toolchain//:all")
+
+oak_toolchains = use_extension("@oak//bazel:extensions.bzl", "oak_toolchains")
+use_repo(oak_toolchains, "oak_cc_toolchain_sysroot")
+
+llvm.sysroot(
+    name = "llvm_toolchain",
+    label = "@oak_cc_toolchain_sysroot//:sysroot",
+    targets = ["linux-x86_64"],
+)
+
+acr = use_extension("@oak//bazel/crates:extensions.bzl", "aliased_crates_repository")
+use_repo(acr, "oak_crates_index")
