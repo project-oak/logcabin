@@ -125,10 +125,10 @@ See each crate's README for details.
 
 ### Oak Dependency Setup
 
-By default, Bazel expects Oak to be checked out at `../oak` relative to the LogCabin repository root. If your Oak checkout is in a different location, create a local `.bazelrc.user` file (ignored by git) in the repository root:
+By default, Bazel expects Oak to be checked out at `../oak` relative to the LogCabin repository root. If your Oak checkout is in a different location, create a local `.local.bazelrc` file (ignored by git) in the repository root:
 
 ```ini
-# .bazelrc.user
+# .local.bazelrc
 common --override_module=oak=/path/to/your/oak/checkout
 ```
 
