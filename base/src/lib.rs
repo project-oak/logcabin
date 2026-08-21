@@ -30,6 +30,16 @@ use core::convert::Infallible;
 use p256::ecdsa::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
+/// A SHA-256 digest (32 bytes).
+pub type Sha256Digest = [u8; 32];
+
+/// A config ID: SHA-256 of the concatenated SEC1 verifying keys in
+/// strict ascending SEC1-lexicographic order.
+pub type ConfigId = Sha256Digest;
+
+/// Opaque entry contents (32 bytes), client-supplied.
+pub type EntryContents = [u8; 32];
+
 // ---------------------------------------------------------------------------
 // Cohort Data
 // ---------------------------------------------------------------------------
@@ -121,7 +131,7 @@ impl<R> CohortData<R> {
     }
 
     /// Returns the config ID: SHA-256 of the concatenated SEC1 bytes.
-    pub fn config_id(&self) -> [u8; 32] {
+    pub fn config_id(&self) -> ConfigId {
         compute_config_id(self.keys())
     }
 
@@ -181,7 +191,7 @@ pub struct InvalidConfigError;
 
 /// Computes the config ID: SHA-256 of the concatenated SEC1 bytes of the
 /// provided verifying keys.
-pub fn compute_config_id<'a>(keys: impl Iterator<Item = &'a VerifyingKey>) -> [u8; 32] {
+pub fn compute_config_id<'a>(keys: impl Iterator<Item = &'a VerifyingKey>) -> ConfigId {
     let mut hasher = Sha256::new();
     for key in keys {
         hasher.update(&key.to_sec1_bytes());
@@ -196,12 +206,12 @@ pub fn compute_config_id<'a>(keys: impl Iterator<Item = &'a VerifyingKey>) -> [u
 /// A ledger block: the entry, index, and hash chain tail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerBlock {
-    /// Entry contents (32 bytes).
-    pub entry: [u8; 32],
+    /// Entry contents.
+    pub entry: EntryContents,
     /// Index of the entry in the ledger.
     pub index: u64,
-    /// Hash chain tail (32 bytes).
-    pub hash_chain_tail: [u8; 32],
+    /// Hash chain tail.
+    pub hash_chain_tail: Sha256Digest,
 }
 
 #[cfg(test)]

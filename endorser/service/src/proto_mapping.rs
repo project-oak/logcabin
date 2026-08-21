@@ -31,8 +31,9 @@ use endorser_micro_rpc_service::logcabin::proto::{
     VerifyingKey as VerifyingKeyProto,
 };
 use logcabin_endorser_core::{
-    Active, CohortConfig, CohortFinalization, CohortTakeOver, EndorserData, EndorserFinalization,
-    Finalized, InvalidConfigError, LedgerBlock, Ledgers, Uninitialized,
+    Active, CohortConfig, CohortFinalization, CohortTakeOver, ConfigId, EndorserData,
+    EndorserFinalization, EntryContents, Finalized, InvalidConfigError, LedgerBlock, Ledgers,
+    Sha256Digest, Uninitialized,
 };
 use micro_rpc::{Status, StatusCode};
 
@@ -177,13 +178,13 @@ pub fn parse_ledger_proto(ledger: LedgerProto) -> Result<(u32, LedgerBlock), Sta
             format!("ledger {ledger_id} has no tail block"),
         )
     })?;
-    let entry: [u8; 32] = tail.entry.try_into().map_err(|_| {
+    let entry: EntryContents = tail.entry.try_into().map_err(|_| {
         Status::new_with_message(
             StatusCode::InvalidArgument,
             format!("ledger {ledger_id} entry must be exactly 32 bytes"),
         )
     })?;
-    let hash_chain_tail: [u8; 32] = tail.hash_chain_tail.try_into().map_err(|_| {
+    let hash_chain_tail: Sha256Digest = tail.hash_chain_tail.try_into().map_err(|_| {
         Status::new_with_message(
             StatusCode::InvalidArgument,
             format!("ledger {ledger_id} hash_chain_tail must be exactly 32 bytes"),
@@ -254,7 +255,7 @@ pub fn parse_cohort_takeover_proto(
     };
 
     // instance_id must be exactly 32 bytes.
-    let instance_id: [u8; 32] = cohort_takeover.instance_id.try_into().map_err(|_| {
+    let instance_id: ConfigId = cohort_takeover.instance_id.try_into().map_err(|_| {
         Status::new_with_message(
             StatusCode::InvalidArgument,
             format!("instance_id must be exactly 32 bytes"),

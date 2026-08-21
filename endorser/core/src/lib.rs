@@ -33,8 +33,8 @@ use logcabin_base::receipts;
 
 pub use ledger::{Ledgers, SignedLedgerBlock};
 pub use logcabin_base::{
-    CohortConfig, CohortData, CohortFinalization, EndorserData, EndorserFinalization,
-    InvalidConfigError, LedgerBlock,
+    CohortConfig, CohortData, CohortFinalization, ConfigId, EndorserData, EndorserFinalization,
+    EntryContents, InvalidConfigError, LedgerBlock, Sha256Digest,
 };
 pub use takeover::CohortTakeOver;
 
@@ -59,7 +59,7 @@ pub struct Active {
     /// Public keys of the current cohort.
     cohort_config: CohortConfig,
     /// Instance ID: SHA-256 of the first cohort's concatenated verifying keys.
-    instance_id: [u8; 32],
+    instance_id: ConfigId,
     /// Map from ledger ID to the latest block in that ledger.
     ledgers: Ledgers,
     /// Activation receipt, computed once during activation.
@@ -71,7 +71,7 @@ pub struct Active {
 /// new, but can still serve its receipts and ledger state.
 pub struct Finalized {
     /// Instance ID inherited from (or computed during) activation.
-    instance_id: [u8; 32],
+    instance_id: ConfigId,
     /// Ledger state at finalization time, in ascending ledger_id order.
     ledgers: Ledgers,
     /// Activation receipt (carried over from the Active state).
@@ -242,7 +242,7 @@ impl Endorser<Active> {
     pub fn append_entry(
         &mut self,
         ledger_id: u32,
-        entry: [u8; 32],
+        entry: EntryContents,
         expected_index: u64,
     ) -> Result<Signature, AppendEntryError> {
         let block =
@@ -262,7 +262,7 @@ impl Endorser<Active> {
         }
 
         // Compute new hash chain tail: SHA256(old_tail || old_entry).
-        let new_tail: [u8; 32] = {
+        let new_tail: Sha256Digest = {
             use sha2::Digest;
             let mut hasher = Sha256::new();
             hasher.update(&block.hash_chain_tail);
@@ -317,7 +317,7 @@ impl Endorser<Active> {
     }
 
     /// Returns the instance ID.
-    pub fn instance_id(&self) -> &[u8; 32] {
+    pub fn instance_id(&self) -> &ConfigId {
         &self.state.instance_id
     }
 
@@ -383,7 +383,7 @@ impl Endorser<Finalized> {
     }
 
     /// Returns the instance ID.
-    pub fn instance_id(&self) -> &[u8; 32] {
+    pub fn instance_id(&self) -> &ConfigId {
         &self.state.instance_id
     }
 }
