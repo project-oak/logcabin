@@ -121,6 +121,16 @@ See each crate's README for details.
 
 - **Nix** — the development environment is fully managed via a Nix flake.
 - **Bazel** — the primary build system (provided by the Nix dev shell).
+- **Oak Repository** — LogCabin depends on [Project Oak](https://github.com/project-oak/oak) for shared toolchains, schemas, and runtime binaries.
+
+### Oak Dependency Setup
+
+By default, Bazel expects Oak to be checked out at `../oak` relative to the LogCabin repository root. If your Oak checkout is in a different location, create a local `.bazelrc.user` file (ignored by git) in the repository root:
+
+```ini
+# .bazelrc.user
+common --override_module=oak=/path/to/your/oak/checkout
+```
 
 ### Quick Start
 

@@ -1850,7 +1850,7 @@
     },
     "@@oak+//oak_containers/kernel/internal:extensions.bzl%nix_kernels": {
       "general": {
-        "bzlTransitiveDigest": "ykT5NzurMiGhGvQWcQH6MiLEnLKv09qghvemYgoudUs=",
+        "bzlTransitiveDigest": "YWKV1AYKNrXZGcZ3qtIZBsXzsRn60yT2AWb+6ducK2k=",
         "usagesDigest": "rZqiC8kNUBENTAqDX3b33VZRro7il6QAmY2g9L+fVQQ=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
@@ -1874,7 +1874,7 @@
               "nix_file_deps": {
                 "@@oak+//oak_containers/kernel:kernel-common.nix": "//oak_containers/kernel:kernel-common.nix",
                 "@@oak+//oak_containers/kernel:kernel_version.txt": "//oak_containers/kernel:kernel_version.txt",
-                "@@oak+//oak_containers/kernel/configs/6.12.85:minimal.config": "//oak_containers/kernel/configs/6.12.85:minimal.config"
+                "@@oak+//oak_containers/kernel/configs/6.12.95:minimal.config": "//oak_containers/kernel/configs/6.12.95:minimal.config"
               },
               "nix_file_content": "",
               "repository": "@@oak++nix_kernels+nixpkgs//:nixpkgs",
@@ -1894,7 +1894,7 @@
               "nix_file_deps": {
                 "@@oak+//oak_containers/kernel:kernel-common.nix": "//oak_containers/kernel:kernel-common.nix",
                 "@@oak+//oak_containers/kernel:kernel_version.txt": "//oak_containers/kernel:kernel_version.txt",
-                "@@oak+//oak_containers/kernel/configs/6.12.85:minimal.config": "//oak_containers/kernel/configs/6.12.85:minimal.config",
+                "@@oak+//oak_containers/kernel/configs/6.12.95:minimal.config": "//oak_containers/kernel/configs/6.12.95:minimal.config",
                 "@@oak+//oak_containers/kernel/patches:virtio-dma.patch": "//oak_containers/kernel/patches:virtio-dma.patch",
                 "@@oak+//oak_containers/kernel/patches:tdx-probe-roms.patch": "//oak_containers/kernel/patches:tdx-probe-roms.patch",
                 "@@oak+//oak_containers/kernel/patches:rtmr-enable.patch": "//oak_containers/kernel/patches:rtmr-enable.patch"
@@ -1993,7 +1993,7 @@
     },
     "@@rules_apple+//apple:apple.bzl%provisioning_profile_repository_extension": {
       "general": {
-        "bzlTransitiveDigest": "DBjF8z9KnkAVkDon8si62fhfjje60FibbeIt+zE+BWw=",
+        "bzlTransitiveDigest": "2cBXTE/fvClSpGce+ynwObOpFH/7oWFzmeSUGe5Pbfw=",
         "usagesDigest": "vsJl8Rw5NL+5Ag2wdUDoTeRF/5klkXO8545Iy7U1Q08=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
@@ -21757,7 +21757,7 @@
     },
     "@@rules_rust+//crate_universe/private:internal_extensions.bzl%cu_nr": {
       "general": {
-        "bzlTransitiveDigest": "9VVMyksDzcC2evz0RKCLCG/6Fq94QWomRqPyHKL/xek=",
+        "bzlTransitiveDigest": "hQfWSav2AZnAubCqTVpdflIBg/NYkLglBFVyrqOSUUI=",
         "usagesDigest": "ZmL90WEq2B6/NJ8rtHAqdnDPn+/9xG/GWR5K4UU4tyo=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
