@@ -19,24 +19,15 @@ was for a different project), you probably don't need to do it again.
 Visit <https://cla.developers.google.com/> to see your current agreements or to
 sign a new one.
 
-## Repository Model
-
-LogCabin's current source-of-truth is an internally-hosted git respository that
-uses Gerrit for code review.
-
 ## Contributing from GitHub
 
-Our main development flow is through our internal Gerrit instance, and it's not
-currently possible to submit changes through the GitHub interface.
+We'd love to accept your patches and contributions to this project. All changes
+require review. We use GitHub pull requests for this purpose. Consult
+[GitHub Help](https://help.github.com/articles/about-pull-requests/) for more
+information on using pull requests.
 
-However, we still welcome changes from the greater community, and are open to
-reviewing pull requests from contributors outside of Google. While we can't
-submit your change directly through the GitHub interface, someone from the team
-can work with you to make sure that your change gets submitted, with proper
-attribution.
+## Development Setup
 
-If you're interested, just open a pull request!
-
-## Contributing Internally
-
-If you are a Googler, see: go/contributing-to-oak
+For build prerequisites, toolchain setup, and configuring the Oak dependency
+path, see the [Developing LogCabin](README.md#developing-logcabin) section in
+the README.

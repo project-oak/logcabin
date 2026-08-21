@@ -43,3 +43,4 @@ common --@rules_rust//rust/settings:toolchain_generated_sysroot=True
 
 try-import %workspace%/../.ci.bazelrc
 try-import %workspace%/../.tmp.ci.bazelrc
+try-import %workspace%/.bazelrc.user
