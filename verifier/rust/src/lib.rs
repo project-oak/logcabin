@@ -39,7 +39,7 @@
 
 extern crate alloc;
 
-use logcabin_base::{receipts, CohortConfig, LedgerBlock};
+use logcabin_base::{receipts, CohortConfig, ConfigId, LedgerBlock, Sha256Digest};
 use p256::ecdsa::signature::Verifier as _;
 
 mod handover;
@@ -65,7 +65,7 @@ pub struct Verifier {
     /// The currently trusted cohort configuration.
     trusted_config: CohortConfig,
     /// The instance ID of the LogCabin service.
-    instance_id: [u8; 32],
+    instance_id: ConfigId,
 }
 
 impl Verifier {
@@ -91,7 +91,7 @@ impl Verifier {
     /// instance - the instance started with a different cohort and
     /// has since evolved, but the verifier trusts that this instance_id
     /// belongs to this cohort.
-    pub fn new_with_instance_id(trusted_config: CohortConfig, instance_id: [u8; 32]) -> Self {
+    pub fn new_with_instance_id(trusted_config: CohortConfig, instance_id: ConfigId) -> Self {
         // TODO: b/476380752 - Analyze if we must verify activation here.
         Self {
             trusted_config,
@@ -105,7 +105,7 @@ impl Verifier {
     }
 
     /// Returns the instance ID.
-    pub fn instance_id(&self) -> &[u8; 32] {
+    pub fn instance_id(&self) -> &ConfigId {
         &self.instance_id
     }
 

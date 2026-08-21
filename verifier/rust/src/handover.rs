@@ -22,8 +22,8 @@
 
 use core::ops::Deref;
 use logcabin_base::{
-    receipts, CohortConfig, CohortData, CohortFinalization, EndorserData, EndorserFinalization,
-    InvalidConfigError,
+    receipts, CohortConfig, CohortData, CohortFinalization, ConfigId, EndorserData,
+    EndorserFinalization, InvalidConfigError, Sha256Digest,
 };
 use p256::ecdsa::signature::Verifier as _;
 use p256::ecdsa::Signature;
@@ -62,7 +62,7 @@ impl CohortActivation {
     ///
     /// Computed as the SHA-256 hash of the concatenated SEC1-encoded
     /// endorser verifying keys, in their canonical order.
-    pub(crate) fn new_config_id(&self) -> [u8; 32] {
+    pub(crate) fn new_config_id(&self) -> ConfigId {
         self.endorser_data.config_id()
     }
 }
@@ -125,7 +125,7 @@ pub struct CohortHandover {
     /// Activation receipts from the incoming cohort.
     pub activation: CohortActivation,
     /// SHA-256 hash of the serialized ledger state at finalization.
-    pub ledgers_hash: [u8; 32],
+    pub ledgers_hash: Sha256Digest,
 }
 
 impl CohortHandover {
@@ -136,7 +136,7 @@ impl CohortHandover {
     pub fn try_new(
         finalization_entries: impl IntoIterator<Item = EndorserFinalization>,
         activation_entries: impl IntoIterator<Item = EndorserActivation>,
-        ledgers_hash: [u8; 32],
+        ledgers_hash: Sha256Digest,
     ) -> Result<Self, InvalidConfigError> {
         let finalization = CohortData::try_new(finalization_entries)?;
         let activation = CohortActivation::try_new(activation_entries)?;
@@ -163,7 +163,7 @@ impl CohortHandover {
     ///
     /// On success, consumes the handover and returns the new
     /// [`CohortConfig`].
-    pub fn verify(self, instance_id: &[u8; 32]) -> Result<CohortConfig, HandoverError> {
+    pub fn verify(self, instance_id: &ConfigId) -> Result<CohortConfig, HandoverError> {
         let prev_config_id = self.finalization.config_id();
         let new_config_id = self.activation.new_config_id();
 
@@ -261,8 +261,8 @@ mod tests {
         old_vks: Vec<VerifyingKey>,
         new_sks: Vec<SigningKey>,
         new_vks: Vec<VerifyingKey>,
-        instance_id: [u8; 32],
-        ledgers_hash: [u8; 32],
+        instance_id: ConfigId,
+        ledgers_hash: Sha256Digest,
     }
 
     impl HandoverSetup {
@@ -292,13 +292,13 @@ mod tests {
             }
         }
 
-        fn old_config_id(&self) -> [u8; 32] {
+        fn old_config_id(&self) -> ConfigId {
             CohortConfig::try_from_keys(self.old_vks.clone())
                 .unwrap()
                 .config_id()
         }
 
-        fn new_config_id(&self) -> [u8; 32] {
+        fn new_config_id(&self) -> ConfigId {
             CohortConfig::try_from_keys(self.new_vks.clone())
                 .unwrap()
                 .config_id()

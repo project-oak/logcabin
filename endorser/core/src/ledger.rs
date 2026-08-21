@@ -22,7 +22,7 @@ use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature, SigningKey};
 
 use logcabin_base::receipts;
-use logcabin_base::LedgerBlock;
+use logcabin_base::{ConfigId, LedgerBlock, Sha256Digest};
 use sha2::{Digest, Sha256};
 
 /// A snapshot of a ledger's tail block, signed by the endorser.
@@ -47,7 +47,7 @@ impl SignedLedgerBlock {
         block: &LedgerBlock,
         nonce: u64,
         ledger_id: u32,
-        instance_id: &[u8; 32],
+        instance_id: &ConfigId,
         signing_key: &SigningKey,
     ) -> Self {
         let message = receipts::build_read_latest_message(
@@ -92,7 +92,7 @@ impl Ledgers {
     /// Each ledger item (in ascending `ledger_id` order):
     ///   `ledger_id (u32 BE) || entry (32 bytes) || index (u64 BE) ||
     ///    hash_chain_tail (32 bytes)`
-    pub fn hash(&self) -> [u8; 32] {
+    pub fn hash(&self) -> Sha256Digest {
         let mut hasher = Sha256::new();
         hasher.update(&(self.0.len() as u32).to_be_bytes());
         for (ledger_id, block) in &self.0 {

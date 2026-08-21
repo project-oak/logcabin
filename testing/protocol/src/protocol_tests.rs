@@ -26,7 +26,7 @@
 //! through protobuf services. These tests cut away all the middleware to test
 //! the raw protocol.
 
-use logcabin_base::{CohortConfig, EndorserData};
+use logcabin_base::{CohortConfig, EndorserData, EntryContents};
 use logcabin_endorser_core::{Active, CohortFinalization, CohortTakeOver, Endorser, Uninitialized};
 use logcabin_verifier::{CohortHandover, LedgerReceipt, LedgerReceipts, Verifier};
 
@@ -78,7 +78,7 @@ fn read_latest_from_cohort(
 fn append_to_cohort(
     endorsers: &mut [Endorser<Active>],
     ledger_id: u32,
-    entry: [u8; 32],
+    entry: EntryContents,
     expected_index: u64,
 ) -> LedgerReceipts {
     let receipts: Vec<_> = endorsers

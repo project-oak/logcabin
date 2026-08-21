@@ -21,11 +21,12 @@
 //! verify the signature.
 
 use alloc::vec::Vec;
+use crate::{ConfigId, EntryContents, Sha256Digest};
 
 /// Builds the activation receipt message for a new instance.
 ///
 /// Format: `"activate" || instance_id (32 bytes)`
-pub fn build_activate_new_instance_message(instance_id: &[u8; 32]) -> Vec<u8> {
+pub fn build_activate_new_instance_message(instance_id: &ConfigId) -> Vec<u8> {
     let mut message = Vec::new();
     message.extend_from_slice(b"activate");
     message.extend_from_slice(instance_id);
@@ -40,10 +41,10 @@ pub fn build_activate_new_instance_message(instance_id: &[u8; 32]) -> Vec<u8> {
 ///
 /// `ledgers_hash` is a SHA-256 hash of the serialized endorser ledger state
 pub fn build_activate_from_prev_message(
-    instance_id: &[u8; 32],
-    prev_config_id: &[u8; 32],
-    new_config_id: &[u8; 32],
-    ledgers_hash: &[u8; 32],
+    instance_id: &ConfigId,
+    prev_config_id: &ConfigId,
+    new_config_id: &ConfigId,
+    ledgers_hash: &Sha256Digest,
 ) -> Vec<u8> {
     let mut message = Vec::new();
     message.extend_from_slice(b"activate");
@@ -57,7 +58,7 @@ pub fn build_activate_from_prev_message(
 /// Builds the create-ledger receipt message.
 ///
 /// Format: `"create_ledger" || instance_id (32 bytes) || ledger_id (4 bytes, BE)`
-pub fn build_create_ledger_message(instance_id: &[u8; 32], ledger_id: u32) -> Vec<u8> {
+pub fn build_create_ledger_message(instance_id: &ConfigId, ledger_id: u32) -> Vec<u8> {
     let mut message = Vec::new();
     message.extend_from_slice(b"create_ledger");
     message.extend_from_slice(instance_id);
@@ -71,11 +72,11 @@ pub fn build_create_ledger_message(instance_id: &[u8; 32], ledger_id: u32) -> Ve
 ///   `"append_entry" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
 ///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes)`
 pub fn build_append_entry_message(
-    instance_id: &[u8; 32],
+    instance_id: &ConfigId,
     ledger_id: u32,
-    entry: &[u8; 32],
+    entry: &EntryContents,
     index: u64,
-    hash_chain_tail: &[u8; 32],
+    hash_chain_tail: &Sha256Digest,
 ) -> Vec<u8> {
     let mut message = Vec::new();
     message.extend_from_slice(b"append_entry");
@@ -94,11 +95,11 @@ pub fn build_append_entry_message(
 ///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes) ||
 ///    nonce (8 bytes, BE)`
 pub fn build_read_latest_message(
-    instance_id: &[u8; 32],
+    instance_id: &ConfigId,
     ledger_id: u32,
-    entry: &[u8; 32],
+    entry: &EntryContents,
     index: u64,
-    hash_chain_tail: &[u8; 32],
+    hash_chain_tail: &Sha256Digest,
     nonce: u64,
 ) -> Vec<u8> {
     let mut message = Vec::new();
@@ -118,10 +119,10 @@ pub fn build_read_latest_message(
 ///   `"finalize" || instance_id (32 bytes) || cohort_config_id (32 bytes) ||
 ///    next_cohort_config_id (32 bytes) || ledgers_hash (32 bytes)`
 pub fn build_finalize_message(
-    instance_id: &[u8; 32],
-    cohort_config_id: &[u8; 32],
-    next_cohort_config_id: &[u8; 32],
-    ledgers_hash: &[u8; 32],
+    instance_id: &ConfigId,
+    cohort_config_id: &ConfigId,
+    next_cohort_config_id: &ConfigId,
+    ledgers_hash: &Sha256Digest,
 ) -> Vec<u8> {
     let mut message = Vec::new();
     message.extend_from_slice(b"finalize");

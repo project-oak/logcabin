@@ -20,7 +20,7 @@
 use p256::ecdsa::signature::Verifier;
 
 use crate::ledger::Ledgers;
-use logcabin_base::{receipts, CohortConfig, CohortFinalization, EndorserFinalization};
+use logcabin_base::{receipts, CohortConfig, CohortFinalization, ConfigId, EndorserFinalization};
 
 /// Complete takeover data from a previous cohort, needed to activate a new
 /// endorser via reconfiguration.
@@ -37,7 +37,7 @@ use logcabin_base::{receipts, CohortConfig, CohortFinalization, EndorserFinaliza
 #[derive(Clone)]
 pub struct CohortTakeOver {
     /// The instance_id inherited from the previous cohort. Exactly 32 bytes.
-    pub(crate) instance_id: [u8; 32],
+    pub(crate) instance_id: ConfigId,
     /// Finalization receipts from each endorser in the previous cohort.
     /// Keys are in strict ascending SEC1-lexicographic order.
     cohort_finalization: CohortFinalization,
@@ -50,7 +50,7 @@ impl CohortTakeOver {
     /// [`CohortFinalization`] (which guarantees endorser keys are in strict
     /// ascending SEC1-lexicographic order), an instance ID, and ledger state.
     pub fn new(
-        instance_id: [u8; 32],
+        instance_id: ConfigId,
         cohort_finalization: CohortFinalization,
         ledgers: Ledgers,
     ) -> Self {
@@ -67,13 +67,13 @@ impl CohortTakeOver {
     }
 
     /// Returns the config ID of the finalized (previous) cohort.
-    pub fn prev_config_id(&self) -> [u8; 32] {
+    pub fn prev_config_id(&self) -> ConfigId {
         self.cohort_finalization.config_id()
     }
 
     /// Decomposes the takeover into its parts: instance ID, previous cohort
     /// finalization, and ledger state.
-    pub fn into_parts(self) -> ([u8; 32], CohortFinalization, Ledgers) {
+    pub fn into_parts(self) -> (ConfigId, CohortFinalization, Ledgers) {
         (self.instance_id, self.cohort_finalization, self.ledgers)
     }
 
