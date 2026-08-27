@@ -92,7 +92,13 @@ service EndorserService {
   //      cohort should have signed during FinalizeEndorser:
   //
   //        "finalize" || instance_id || prev_config_id || new_config_id ||
-  //        num_ledgers (4 bytes, BE) || ledger items...
+  //        ledgers_hash (32 bytes)
+  //
+  //      where ledgers_hash = SHA-256(num_ledgers (4 bytes, BE) || ledger
+  //      items), and each ledger item is serialized as:
+  //        ledger_id (u32, BE) || entry (32 bytes) || index (u64, BE) ||
+  //        hash_chain_tail (32 bytes)
+  //      Ledger items are in ascending ledger_id order.
   //
   //      where prev_config_id is derived from the finalization endorser keys,
   //      new_config_id is derived from new_config, and ledger items are the
@@ -242,9 +248,10 @@ message ActivateEndorserResponse {
   // previous cohort (prev_cohort_finalization present):
   //
   //   prev_config_id (32 bytes) || new_config_id (32 bytes) ||
-  //   num_ledgers (4 bytes, big endian) || ledgers (see below).
+  //   ledgers_hash (32 bytes)
   //
-  // Where each ledger item is serialized as:
+  // Where ledgers_hash = SHA-256(num_ledgers (4 bytes, BE) || ledger items),
+  // and each ledger item is serialized as:
   //
   //   ledger_id (u32, big endian) || entry (32 bytes) || index (u64, big endian) ||
   //   hash_chain_tail (32 bytes)
@@ -356,9 +363,10 @@ message FinalizeEndorserResponse {
   //
   //   "finalize" (utf-8) || instance_id (32 bytes) ||
   //   cohort_config_id (32 bytes) || next_cohort_config_id (32 bytes) ||
-  //   num_ledgers (4 bytes, big endian) || ledgers (see below).
+  //   ledgers_hash (32 bytes)
   //
-  // Where each ledger item is serialized as:
+  // Where ledgers_hash = SHA-256(num_ledgers (4 bytes, BE) || ledger items),
+  // and each ledger item is serialized as:
   //
   //   ledger_id (u32, big endian) || entry (32 bytes) || index (u64, big endian) ||
   //   hash_chain_tail (32 bytes)
