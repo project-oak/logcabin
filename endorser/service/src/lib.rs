@@ -360,8 +360,16 @@ impl<A: Attester, S: Signer> EndorserServiceProto for EndorserService<A, S> {
             )
         })?;
 
-        let sig = endorser
-            .append_entry(request.ledger_id, entry, request.expected_index)
+        // Nonce 0 is the proto3 default — reject it to detect missing fields.
+        if request.nonce == 0 {
+            return Err(Status::new_with_message(
+                StatusCode::InvalidArgument,
+                format!("nonce must not be zero"),
+            ));
+        }
+
+        let result = endorser
+            .append_entry(request.ledger_id, entry, request.expected_index, request.nonce)
             .map_err(|err| match err {
                 AppendEntryError::LedgerNotFound(err) => Status::new_with_message(
                     StatusCode::NotFound,
@@ -374,13 +382,20 @@ impl<A: Attester, S: Signer> EndorserServiceProto for EndorserService<A, S> {
             })?;
 
         Ok(AppendEntryResponse {
-            append_entry_receipt: sig.to_bytes().to_vec(),
+            block: Some(LedgerBlockProto {
+                entry: result.block.entry.to_vec(),
+                index: result.block.index,
+                hash_chain_tail: result.block.hash_chain_tail.to_vec(),
+            }),
+            entry_receipt: result.entry_receipt.to_bytes().to_vec(),
+            tip_receipt: result.tip_receipt.to_bytes().to_vec(),
         })
     }
 
     fn read_latest(&mut self, request: ReadLatestRequest) -> Result<ReadLatestResponse, Status> {
         let (_, endorser) = self.get_active_endorser_mut(request.endorser_alias)?;
 
+        // Nonce 0 is the proto3 default — reject it to detect missing fields.
         if request.nonce == 0 {
             return Err(Status::new_with_message(
                 StatusCode::InvalidArgument,
@@ -399,11 +414,12 @@ impl<A: Attester, S: Signer> EndorserServiceProto for EndorserService<A, S> {
 
         Ok(ReadLatestResponse {
             block: Some(LedgerBlockProto {
-                entry: result.entry.to_vec(),
-                index: result.index,
-                hash_chain_tail: result.hash_chain_tail.to_vec(),
+                entry: result.block.entry.to_vec(),
+                index: result.block.index,
+                hash_chain_tail: result.block.hash_chain_tail.to_vec(),
             }),
-            read_signature: result.signature.to_bytes().to_vec(),
+            entry_receipt: result.entry_receipt.to_bytes().to_vec(),
+            tip_receipt: result.tip_receipt.to_bytes().to_vec(),
         })
     }
 
@@ -1058,13 +1074,21 @@ mod tests {
                 ledger_id: 1,
                 entry: std::vec![0xAB; 32],
                 expected_index: 1,
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
             })
             .unwrap();
 
-        // Receipt should be a valid ECDSA P-256 RAW (R || S) signature.
-        assert_eq!(resp.append_entry_receipt.len(), 64);
-        p256::ecdsa::Signature::from_slice(&resp.append_entry_receipt)
-            .expect("append_entry_receipt must be a valid ECDSA P-256 signature");
+        // Receipts should be valid ECDSA P-256 RAW (R || S) signatures.
+        assert_eq!(resp.entry_receipt.len(), 64);
+        p256::ecdsa::Signature::from_slice(&resp.entry_receipt)
+            .expect("entry_receipt must be a valid ECDSA P-256 signature");
+        assert_eq!(resp.tip_receipt.len(), 64);
+        p256::ecdsa::Signature::from_slice(&resp.tip_receipt)
+            .expect("tip_receipt must be a valid ECDSA P-256 signature");
+
+        let block = resp.block.expect("block must be present");
+        assert_eq!(block.index, 1);
+        assert_eq!(block.entry, std::vec![0xAB; 32]);
     }
 
     #[test]
@@ -1079,6 +1103,7 @@ mod tests {
                 ledger_id: 0,
                 entry: std::vec![0xAB; 32],
                 expected_index: 1,
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
             })
             .unwrap_err();
         assert_eq!(err.code, StatusCode::FailedPrecondition);
@@ -1095,6 +1120,7 @@ mod tests {
                 ledger_id: 0,
                 entry: std::vec![0xAB; 32],
                 expected_index: 1,
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
             })
             .unwrap_err();
         assert_eq!(err.code, StatusCode::NotFound);
@@ -1117,6 +1143,7 @@ mod tests {
                 ledger_id: 1,
                 entry: std::vec![0xAB; 16],
                 expected_index: 1,
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
             })
             .unwrap_err();
         assert_eq!(err.code, StatusCode::InvalidArgument);
@@ -1128,6 +1155,29 @@ mod tests {
                 ledger_id: 1,
                 entry: std::vec![0xAB; 64],
                 expected_index: 1,
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
+            })
+            .unwrap_err();
+        assert_eq!(err.code, StatusCode::InvalidArgument);
+    }
+
+    #[test]
+    fn append_entry_rejects_zero_nonce() {
+        let (mut service, alias) = create_active_service();
+        service
+            .create_ledger(CreateLedgerRequest {
+                endorser_alias: alias,
+                ledger_id: 1,
+            })
+            .unwrap();
+
+        let err = service
+            .append_entry(AppendEntryRequest {
+                endorser_alias: alias,
+                ledger_id: 1,
+                entry: std::vec![0xAB; 32],
+                expected_index: 1,
+                nonce: 0,
             })
             .unwrap_err();
         assert_eq!(err.code, StatusCode::InvalidArgument);
@@ -1149,6 +1199,7 @@ mod tests {
                 ledger_id: 1,
                 entry: std::vec![0xAB; 32],
                 expected_index: 99, // should be 1
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
             })
             .unwrap_err();
         assert_eq!(err.code, StatusCode::FailedPrecondition);
@@ -1164,6 +1215,7 @@ mod tests {
                 ledger_id: 99, // doesn't exist
                 entry: std::vec![0xAB; 32],
                 expected_index: 1,
+                nonce: 0xDEAD_BEEF_CAFE_BABE,
             })
             .unwrap_err();
         assert_eq!(err.code, StatusCode::NotFound);
@@ -1193,10 +1245,13 @@ mod tests {
         assert_eq!(block.hash_chain_tail, std::vec![0u8; 32]);
         assert_eq!(block.index, 0);
 
-        // Signature should be a valid ECDSA P-256 RAW (R || S) signature.
-        assert_eq!(resp.read_signature.len(), 64);
-        p256::ecdsa::Signature::from_slice(&resp.read_signature)
-            .expect("read_signature must be a valid ECDSA P-256 signature");
+        // Receipts should be valid ECDSA P-256 RAW (R || S) signatures.
+        assert_eq!(resp.entry_receipt.len(), 64);
+        p256::ecdsa::Signature::from_slice(&resp.entry_receipt)
+            .expect("entry_receipt must be a valid ECDSA P-256 signature");
+        assert_eq!(resp.tip_receipt.len(), 64);
+        p256::ecdsa::Signature::from_slice(&resp.tip_receipt)
+            .expect("tip_receipt must be a valid ECDSA P-256 signature");
     }
 
     #[test]

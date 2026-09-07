@@ -159,6 +159,13 @@ service EndorserService {
   //   - tail <- SHA256(tail || latest_entry)
   //   - height <- height + 1
   //   - latest_entry <- request.entry
+  //
+  // Produces two receipts over the post-append state:
+  //   - An entry receipt (nonce-free): proves the entry is committed at a
+  //     specific index. Stored by the coordinator for ReadByIndex.
+  //   - A tip receipt (nonce-bound): proves the ledger tip state at the time
+  //     of the request. Provides freshness proof to the client.
+  //
   // Error modes:
   //   - If the endorser does not exist, returns NotFound.
   //   - If the endorser is not activated (uninitialized or finalized),
@@ -167,12 +174,18 @@ service EndorserService {
   //   - If the expected index does not match height+1 (maybe another entry was
   //     added since the last read), returns FailedPrecondition.
   //   - If the payload is not exactly 32 bytes, returns InvalidArgument.
+  //   - If the nonce is zero, returns InvalidArgument.
   rpc AppendEntry(AppendEntryRequest) returns (AppendEntryResponse) {
     option (.oak.micro_rpc.method_id) = 4006;
   }
 
   // method_id: 4007
   // Reads the latest entry from a ledger.
+  //
+  // Produces both an entry receipt and a tip receipt over the current state,
+  // mirroring the receipts produced by AppendEntry. This allows a coordinator
+  // to recover an entry receipt if it was lost (e.g., after a crash).
+  //
   // Error modes:
   //   - If the endorser does not exist, returns NotFound.
   //   - If the endorser is not activated (uninitialized or finalized),
@@ -292,20 +305,49 @@ message AppendEntryRequest {
   bytes entry = 3;
 
   // The expected index of the entry in the ledger.
+  //
+  // This field is expected to be supplied by the coordinator (not the client). The
+  // coordinator resolves the current height from its own storage and passes
+  // it here. This ensures that all endorsers in the cohort process entries
+  // in the same order, preventing hash chain divergence.
   uint64 expected_index = 4;
+
+  // Random nonce for replay protection. Must not be 0.
+  // The endorser signs this nonce into the tip receipt, allowing the caller
+  // to verify that the response is fresh and not a replay of a previous
+  // append.
+  fixed64 nonce = 5;
 }
 
 message AppendEntryResponse {
-  // Signature that confirms the endorser appended the entry.
+  // Post-append ledger block: entry, index, hash_chain_tail.
+  LedgerBlock block = 2;
+
+  // Entry receipt: proves the endorser appended the entry at a specific
+  // index. This receipt says nothing about freshness — it is a timeless
+  // proof of commitment. The coordinator stores this receipt and serves it
+  // via ReadByIndex.
   // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
   //
-  //   "append_entry" (utf-8) || instance_id ||
-  //   ledger_id (4 bytes, big endian) || entry (32 bytes) || index (uint64, big endian) ||
-  //   hash_chain_tail (32 bytes)
+  //   "entry" (utf-8) || instance_id ||
+  //   ledger_id (4 bytes, big endian) || entry (32 bytes) ||
+  //   index (uint64, big endian) || hash_chain_tail (32 bytes)
   //
-  // Where index is the index of the new entry and matches expected_index if
-  // append successful. See CohortConfig for the definition of instance_id.
-  bytes append_entry_receipt = 1;
+  // See CohortConfig for the definition of instance_id.
+  bytes entry_receipt = 1;
+
+  // Tip receipt: proves the ledger tip is at the above state right now.
+  // This receipt is bound to the client-supplied nonce, used to verify
+  // that response is fresh and not a replay.
+  // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
+  //
+  //   "tip" (utf-8) || instance_id ||
+  //   ledger_id (4 bytes, big endian) || entry (32 bytes) ||
+  //   index (uint64, big endian) || hash_chain_tail (32 bytes) ||
+  //   nonce (fixed64, big endian)
+  //
+  // See CohortConfig for the definition of instance_id.
+  bytes tip_receipt = 3;
 }
 
 message ReadLatestRequest {
@@ -323,15 +365,13 @@ message ReadLatestResponse {
   // The latest block state of the requested ledger.
   LedgerBlock block = 1;
 
-  // Signature by endorser proving authenticity.
-  // Format: SHA256 with ECDSA P-256 RAW (R || S), over:
-  //
-  //   "read_latest" (utf-8) || instance_id ||
-  //   ledger_id (4 bytes, big endian) || block.entry (32 bytes) ||
-  //   block.index (uint64, big endian) || block.hash_chain_tail (32 bytes) || nonce (fixed64, big endian)
-  //
-  // See CohortConfig for the definition of instance_id.
-  bytes read_signature = 4;
+  // Entry receipt over the current tip state. Same format as
+  // AppendEntryResponse.entry_receipt.
+  bytes entry_receipt = 5;
+
+  // Tip receipt over the current tip state. Same format as
+  // AppendEntryResponse.tip_receipt.
+  bytes tip_receipt = 4;
 }
 
 message FinalizeEndorserRequest {

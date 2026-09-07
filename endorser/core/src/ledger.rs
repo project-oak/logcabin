@@ -18,53 +18,26 @@
 
 use alloc::collections::BTreeMap;
 
-use p256::ecdsa::signature::Signer as _;
-use p256::ecdsa::{Signature, SigningKey};
+use p256::ecdsa::Signature;
 
-use logcabin_base::receipts;
-use logcabin_base::{ConfigId, LedgerBlock, Sha256Digest};
+use logcabin_base::{LedgerBlock, Sha256Digest};
 use sha2::{Digest, Sha256};
 
-/// A snapshot of a ledger's tail block, signed by the endorser.
+/// A snapshot of a ledger's state, with both receipts signed by the endorser.
 ///
-/// The signature covers the ledger state and a client-supplied nonce
-/// to prevent replay attacks.
+/// Returned by both [`Endorser::append_entry`] and [`Endorser::read_latest`].
+/// The signing is performed by the Endorser, not by this type.
 // TODO: b/476380752 - Merge with base::LedgerReceipt.
 #[derive(Debug)]
 pub struct SignedLedgerBlock {
-    /// The ledger block that was signed.
+    /// The ledger block (entry, index, hash_chain_tail).
     pub block: LedgerBlock,
-    /// Client-supplied nonce included in the signature.
-    pub nonce: u64,
-    /// ECDSA P-256 signature (RAW R || S) over the `read_latest` receipt
-    /// message (see [`receipts::build_read_latest_message`]).
-    pub signature: Signature,
-}
-
-impl SignedLedgerBlock {
-    /// Creates a new signed ledger block by signing the current ledger state.
-    pub(crate) fn new(
-        block: &LedgerBlock,
-        nonce: u64,
-        ledger_id: u32,
-        instance_id: &ConfigId,
-        signing_key: &SigningKey,
-    ) -> Self {
-        let message = receipts::build_read_latest_message(
-            instance_id,
-            ledger_id,
-            &block.entry,
-            block.index,
-            &block.hash_chain_tail,
-            nonce,
-        );
-
-        Self {
-            block: block.clone(),
-            nonce,
-            signature: signing_key.sign(&message),
-        }
-    }
+    /// Entry receipt (nonce-free). Proves the entry is committed at this index.
+    /// This is a timeless proof of commitment, stored by the coordinator.
+    pub entry_receipt: Signature,
+    /// Tip receipt (nonce-bound). Proves the ledger tip is at this state,
+    /// bound to the client-supplied nonce for freshness.
+    pub tip_receipt: Signature,
 }
 
 impl core::ops::Deref for SignedLedgerBlock {
