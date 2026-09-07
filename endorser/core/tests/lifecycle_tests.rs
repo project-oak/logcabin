@@ -31,6 +31,11 @@ fn sorted_config(mut keys: Vec<VerifyingKey>) -> CohortConfig {
     CohortConfig::try_from_keys(keys).unwrap()
 }
 
+/// Returns a non-zero nonce for testing.
+fn nonce() -> u64 {
+    0xDEAD_BEEF_CAFE_BABEu64
+}
+
 /// Creates `n` new endorsers and returns them with their verifying keys.
 fn create_endorsers(n: usize) -> Vec<Endorser<Uninitialized>> {
     (0..n).map(|_| Endorser::new()).collect()
@@ -71,8 +76,8 @@ fn cohort_handover_success() {
         endorser.create_ledger(1).unwrap();
 
         // Append two entries to ledger 1.
-        endorser.append_entry(1, entry_a, 1).unwrap();
-        endorser.append_entry(1, entry_b, 2).unwrap();
+        endorser.append_entry(1, entry_a, 1, nonce()).unwrap();
+        endorser.append_entry(1, entry_b, 2, nonce()).unwrap();
     }
 
     // Verify all endorsers agree on ledger state.
@@ -180,7 +185,7 @@ fn cohort_handover_success() {
     let entry_c = [0xCCu8; 32];
     for active in &mut cohort_2_active {
         active
-            .append_entry(1, entry_c, 3)
+            .append_entry(1, entry_c, 3, nonce())
             .expect("should be able to append to handed-over ledger");
 
         let block_after = active.read_latest(1, 200).unwrap();

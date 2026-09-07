@@ -14,60 +14,156 @@
 // limitations under the License.
 //
 
-//! Ledger types: tail blocks and signed ledger blocks.
+//! Ledger types: blocks, result types, and the ledger store.
 
 use alloc::collections::BTreeMap;
 
+use logcabin_base::receipts;
+use logcabin_base::{ConfigId, EntryContents, LedgerBlock, Sha256Digest};
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature, SigningKey};
-
-use logcabin_base::receipts;
-use logcabin_base::{ConfigId, LedgerBlock, Sha256Digest};
 use sha2::{Digest, Sha256};
 
-/// A snapshot of a ledger's tail block, signed by the endorser.
+/// Result of an [`Endorser::append_entry`] operation.
 ///
-/// The signature covers the ledger state and a client-supplied nonce
-/// to prevent replay attacks.
+/// Contains the post-append ledger block, a nonce-free entry receipt
+/// (prefix `"entry"`), and a nonce-bound append receipt (prefix
+/// `"append_entry"`).
+///
+/// The constructor guarantees that both receipts are signed with the
+/// correct prefix, preventing accidental misuse.
 // TODO: b/476380752 - Merge with base::LedgerReceipt.
 #[derive(Debug)]
-pub struct SignedLedgerBlock {
-    /// The ledger block that was signed.
+pub struct AppendResult {
+    /// The ledger block (entry, index, hash_chain_tail).
     pub block: LedgerBlock,
-    /// Client-supplied nonce included in the signature.
-    pub nonce: u64,
-    /// ECDSA P-256 signature (RAW R || S) over the `read_latest` receipt
-    /// message (see [`receipts::build_read_latest_message`]).
-    pub signature: Signature,
+    /// Entry receipt (nonce-free). Proves the entry is committed at this index.
+    /// This is a timeless proof of commitment, stored by the coordinator.
+    pub entry_receipt: Signature,
+    /// Append receipt (nonce-bound, prefix `"append_entry"`). Proves an
+    /// append was executed, bound to the client-supplied nonce.
+    pub append_receipt: Signature,
 }
 
-impl SignedLedgerBlock {
-    /// Creates a new signed ledger block by signing the current ledger state.
+impl AppendResult {
+    /// Signs a ledger block for an append operation.
+    ///
+    /// Produces an entry receipt (nonce-free, prefix `"entry"`) and an
+    /// append receipt (nonce-bound, prefix `"append_entry"`).
     pub(crate) fn new(
-        block: &LedgerBlock,
-        nonce: u64,
-        ledger_id: u32,
-        instance_id: &ConfigId,
         signing_key: &SigningKey,
+        instance_id: &ConfigId,
+        ledger_id: u32,
+        entry: &EntryContents,
+        index: u64,
+        hash_chain_tail: &Sha256Digest,
+        nonce: u64,
     ) -> Self {
-        let message = receipts::build_read_latest_message(
+        let entry_message = receipts::build_entry_receipt_message(
             instance_id,
             ledger_id,
-            &block.entry,
-            block.index,
-            &block.hash_chain_tail,
+            entry,
+            index,
+            hash_chain_tail,
+        );
+        let entry_receipt = signing_key.sign(&entry_message);
+
+        let append_message = receipts::build_append_receipt_message(
+            instance_id,
+            ledger_id,
+            entry,
+            index,
+            hash_chain_tail,
             nonce,
         );
+        let append_receipt = signing_key.sign(&append_message);
 
         Self {
-            block: block.clone(),
-            nonce,
-            signature: signing_key.sign(&message),
+            block: LedgerBlock {
+                entry: *entry,
+                index,
+                hash_chain_tail: *hash_chain_tail,
+            },
+            entry_receipt,
+            append_receipt,
         }
     }
 }
 
-impl core::ops::Deref for SignedLedgerBlock {
+impl core::ops::Deref for AppendResult {
+    type Target = LedgerBlock;
+    fn deref(&self) -> &LedgerBlock {
+        &self.block
+    }
+}
+
+/// Result of an [`Endorser::read_latest`] operation.
+///
+/// Contains the current ledger block, a nonce-free entry receipt
+/// (prefix `"entry"`), and a nonce-bound read receipt (prefix
+/// `"read_latest"`).
+///
+/// The constructor guarantees that both receipts are signed with the
+/// correct prefix, preventing accidental misuse.
+// TODO: b/476380752 - Merge with base::LedgerReceipt.
+#[derive(Debug)]
+pub struct ReadLatestResult {
+    /// The ledger block (entry, index, hash_chain_tail).
+    pub block: LedgerBlock,
+    /// Entry receipt (nonce-free). Proves the entry is committed at this index.
+    /// This is a timeless proof of commitment, stored by the coordinator.
+    pub entry_receipt: Signature,
+    /// Read receipt (nonce-bound, prefix `"read_latest"`). Proves the
+    /// ledger was read, bound to the client-supplied nonce.
+    pub read_receipt: Signature,
+}
+
+impl ReadLatestResult {
+    /// Signs a ledger block for a read_latest operation.
+    ///
+    /// Produces an entry receipt (nonce-free, prefix `"entry"`) and a
+    /// read receipt (nonce-bound, prefix `"read_latest"`).
+    pub(crate) fn new(
+        signing_key: &SigningKey,
+        instance_id: &ConfigId,
+        ledger_id: u32,
+        entry: &EntryContents,
+        index: u64,
+        hash_chain_tail: &Sha256Digest,
+        nonce: u64,
+    ) -> Self {
+        let entry_message = receipts::build_entry_receipt_message(
+            instance_id,
+            ledger_id,
+            entry,
+            index,
+            hash_chain_tail,
+        );
+        let entry_receipt = signing_key.sign(&entry_message);
+
+        let read_message = receipts::build_read_latest_receipt_message(
+            instance_id,
+            ledger_id,
+            entry,
+            index,
+            hash_chain_tail,
+            nonce,
+        );
+        let read_receipt = signing_key.sign(&read_message);
+
+        Self {
+            block: LedgerBlock {
+                entry: *entry,
+                index,
+                hash_chain_tail: *hash_chain_tail,
+            },
+            entry_receipt,
+            read_receipt,
+        }
+    }
+}
+
+impl core::ops::Deref for ReadLatestResult {
     type Target = LedgerBlock;
     fn deref(&self) -> &LedgerBlock {
         &self.block

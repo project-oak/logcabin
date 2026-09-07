@@ -26,6 +26,9 @@ use p256::ecdsa::Signature;
 
 /// A single endorser's signed receipt for a ledger operation.
 ///
+/// The receipt may cover an `"entry"` (nonce-free, timeless),
+/// `"append_entry"` (nonce-bound), or `"read_latest"` (nonce-bound) message.
+///
 /// The endorser is identified by its positional index in the [`CohortConfig`],
 /// enabling O(1) key lookup during verification.
 ///
@@ -36,13 +39,14 @@ use p256::ecdsa::Signature;
 /// instead of its index in the config. However, this requires the verifier to
 /// look up each key in its trusted config, more expensive uniqueness checks,
 /// and moving more data (33 bytes per key per endorser) for each request. Key
-/// indices allow the same checks in O(n_endorsers) time without hash tables.
+/// indices allow the same checks in O(n_endorsers) time without hash tables.
 pub struct LedgerReceipt {
     /// Index of the endorser's key within the [`CohortConfig`].
     pub key_index: usize,
     /// The ledger block this receipt covers.
     pub block: LedgerBlock,
-    /// ECDSA P-256 signature over the receipt message.
+    /// ECDSA P-256 signature over an `"entry"`, `"append_entry"`, or
+    /// `"read_latest"` prefixed message.
     pub signature: Signature,
 }
 
@@ -59,8 +63,8 @@ impl Deref for LedgerReceipt {
 /// Each receipt references an endorser by its positional index in the
 /// [`CohortConfig`], enabling O(1) key lookup during verification.
 ///
-/// **Note:** This type does not validate key index uniqueness or bounds.
-/// Those checks are performed by [`Verifier::verify_read_latest`], which
+/// **Note:** This type does not validate key index uniqueness or bounds -
+/// that's checked by the Verifier (e.g. [`Verifier::verify_read_latest`]), which
 /// has access to the [`CohortConfig`] and can safely allocate a bitmap
 /// for deduplication.
 pub struct LedgerReceipts {

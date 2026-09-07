@@ -39,7 +39,7 @@
 
 extern crate alloc;
 
-use logcabin_base::{receipts, CohortConfig, ConfigId, LedgerBlock, Sha256Digest};
+use logcabin_base::{receipts, CohortConfig, ConfigId, EntryContents, LedgerBlock};
 use p256::ecdsa::signature::Verifier as _;
 
 mod handover;
@@ -109,9 +109,12 @@ impl Verifier {
         &self.instance_id
     }
 
-    /// Processes a cohort handover: checks that the finalization matches the
-    /// current trusted config, then delegates internal handover verification
-    /// to [`CohortHandover::verify`] and evolves the trusted config.
+    /// Processes a cohort handover and evolves the trusted config.
+    ///
+    /// First pins the handover to the currently trusted cohort by comparing
+    /// config IDs — this is what establishes that the handover continues the
+    /// trusted lineage rather than an attacker-chosen one. Only then are the
+    /// finalization and activation quorums verified.
     pub fn apply_handover(&mut self, handover: CohortHandover) -> Result<(), HandoverError> {
         // Handover must be from our currently trusted cohort.
         if handover.finalization.config_id() != self.trusted_config.config_id() {
@@ -140,6 +143,10 @@ impl Verifier {
     /// the actual keys, key indices to the trusted_config are provided, which
     /// guarantees only trusted keys are used.
     ///
+    /// The caller must draw `nonce` randomly and never reuse it. It is the
+    /// only freshness signal here. A repeated or predictable nonce lets a
+    /// coordinator replay a stale read.
+    ///
     /// Returns the verified ledger block if quorum is met.
     pub fn verify_read_latest(
         &self,
@@ -152,7 +159,7 @@ impl Verifier {
         // but it could be part of a minority of endorsers disagreeing. The
         // majority could still agree. Look for that majority.
         let reference = ledger_receipts.first().ok_or(VerifyError::NoReceipts)?;
-        let expected_message = receipts::build_read_latest_message(
+        let expected_message = receipts::build_read_latest_receipt_message(
             &self.instance_id,
             ledger_id,
             &reference.entry,
@@ -161,34 +168,77 @@ impl Verifier {
             nonce,
         );
 
-        self.verify_ledger_receipts(ledger_receipts, &expected_message)
+        self.verify_ledger_receipts(ledger_receipts, reference, &expected_message)
     }
 
-    /// Verifies a set of AppendEntry receipts against the current trusted
-    /// cohort configuration.
+    /// Verifies a set of append receipts, resulting from an append operation,
+    /// against the current trusted cohort configuration.
     ///
-    /// In addition to checking quorum (same as `verify_read_latest`), this
-    /// verifies that the appended entry has the caller-supplied
-    /// `expected_index`. This check is critical: expected_index acts as a
-    /// nonce (in addition to ensuring consistent ordering). Without this, an
-    /// attacker could return the receipt for an earlier equal payload append.
+    /// Same as [`verify_read_latest`](Self::verify_read_latest), but for an
+    /// `append_entry` operation. The distinct `"append_entry"` prefix prevents
+    /// a coordinator from substituting a `read_latest` receipt for an append
+    /// receipt.
     ///
-    /// Returns the verified ledger block if quorum is met and the index
-    /// matches.
-    // TODO: b/476380752 - Assess if the protocol can accept a nonce for append
-    // calls and merge the 2 verification methods. In practice, there will be 3
-    // sources of receipts to be verified: from `append`, from `read_latest`,
-    // and from a `get_by_index` call which is entirely handled by the
-    // coordinator, retrieving receipts from storage.
+    /// `entry` is the value the client requested to append. Verification
+    /// fails unless the endorsed block actually holds that value, which
+    /// prevents a coordinator from appending a different entry than the one
+    /// the client asked for.
+    ///
+    /// The caller must draw `nonce` randomly and never reuse it: repeating a
+    /// `(ledger_id, entry, nonce)` triple lets a coordinator replay an earlier
+    /// append receipt, so this call succeeds for an append that never ran.
+    ///
+    /// Returns the verified ledger block if quorum is met. The returned
+    /// block's `entry` is guaranteed to equal the `entry` argument.
     pub fn verify_append(
         &self,
         ledger_receipts: &LedgerReceipts,
-        expected_index: u64,
+        entry: &EntryContents,
+        nonce: u64,
+        ledger_id: u32,
+    ) -> Result<LedgerBlock, VerifyError> {
+        let reference = ledger_receipts.first().ok_or(VerifyError::NoReceipts)?;
+        let expected_message = receipts::build_append_receipt_message(
+            &self.instance_id,
+            ledger_id,
+            &reference.entry,
+            reference.index,
+            &reference.hash_chain_tail,
+            nonce,
+        );
+
+        let block = self.verify_ledger_receipts(ledger_receipts, reference, &expected_message)?;
+
+        if block.entry != *entry {
+            return Err(VerifyError::UnexpectedEntry);
+        }
+
+        Ok(block)
+    }
+
+    /// Verifies a set of nonce-free entry receipts (prefix `"entry"`),
+    /// obtained by querying by index, against the current trusted cohort configuration.
+    ///
+    /// In addition to checking quorum, this verifies that the block sits at
+    /// `requested_index` — the index the client asked for in its
+    /// `ReadByIndex` call. This is used when verifying entry receipts
+    /// retrieved from storage, where no nonce is available.
+    ///
+    /// Entry receipts are timeless, so this gives no freshness guarantee. It
+    /// confirms the coordinator served the index the client asked for rather
+    /// than substituting another entry; it says nothing about the ledger tip.
+    ///
+    /// Returns the verified ledger block if quorum is met and the index
+    /// matches.
+    pub fn verify_entry(
+        &self,
+        ledger_receipts: &LedgerReceipts,
+        requested_index: u64,
         ledger_id: u32,
     ) -> Result<LedgerBlock, VerifyError> {
         // Use the first receipt as reference to compare against.
         let reference = ledger_receipts.first().ok_or(VerifyError::NoReceipts)?;
-        let expected_message = receipts::build_append_entry_message(
+        let expected_message = receipts::build_entry_receipt_message(
             &self.instance_id,
             ledger_id,
             &reference.entry,
@@ -196,12 +246,11 @@ impl Verifier {
             &reference.hash_chain_tail,
         );
 
-        let block = self.verify_ledger_receipts(ledger_receipts, &expected_message)?;
+        let block = self.verify_ledger_receipts(ledger_receipts, reference, &expected_message)?;
 
-        // Important check: expected_index acts as a nonce.
-        if block.index != expected_index {
+        if block.index != requested_index {
             return Err(VerifyError::UnexpectedIndex {
-                expected: expected_index,
+                requested: requested_index,
                 actual: block.index,
             });
         }
@@ -214,13 +263,16 @@ impl Verifier {
     /// Checks key index bounds and uniqueness via a bitmap, verifies that
     /// a quorum of endorsers signed the same block with the given
     /// `expected_message`, and returns the agreed-upon [`LedgerBlock`].
+    ///
+    /// `reference` is the receipt the caller used to build `expected_message`;
+    /// it is passed in rather than re-derived so this helper never has to
+    /// index into a possibly empty `ledger_receipts`.
     fn verify_ledger_receipts(
         &self,
         ledger_receipts: &LedgerReceipts,
+        reference: &LedgerReceipt,
         expected_message: &[u8],
     ) -> Result<LedgerBlock, VerifyError> {
-        let reference = &ledger_receipts[0];
-
         let cohort_size = self.trusted_config.len();
         let mut seen_keys = alloc::vec![false; cohort_size];
         let mut valid_count = 0;
@@ -263,8 +315,8 @@ impl Verifier {
 // Error types
 // ---------------------------------------------------------------------------
 
-/// Error returned by [`Verifier::verify_read_latest`] and
-/// [`Verifier::verify_append`].
+/// Error returned by [`Verifier::verify_read_latest`],
+/// [`Verifier::verify_append`], and [`Verifier::verify_entry`].
 #[derive(Debug)]
 pub enum VerifyError {
     /// No receipts were provided.
@@ -275,14 +327,17 @@ pub enum VerifyError {
     DuplicateKeyIndex,
     /// Not enough valid signatures to meet the quorum threshold.
     QuorumNotMet(QuorumError),
-    /// The verified block index does not match the expected index
-    /// (returned by [`Verifier::verify_append`]).
+    /// The verified block does not sit at the index the caller requested
+    /// (returned by [`Verifier::verify_entry`]).
     UnexpectedIndex {
-        /// The index the caller expected.
-        expected: u64,
+        /// The index the caller requested.
+        requested: u64,
         /// The index in the verified block.
         actual: u64,
     },
+    /// The verified block does not hold the entry the caller expected
+    /// (returned by [`Verifier::verify_append`]).
+    UnexpectedEntry,
 }
 
 #[cfg(test)]
@@ -592,7 +647,7 @@ mod tests {
             let receipts = signers
                 .iter()
                 .map(|&i| {
-                    let message = receipts::build_read_latest_message(
+                    let message = receipts::build_read_latest_receipt_message(
                         instance_id,
                         ledger_id,
                         &block.entry,
@@ -610,8 +665,9 @@ mod tests {
             LedgerReceipts::new(receipts)
         }
 
-        /// Signs append_entry receipts for the given endorsers (by index).
-        fn sign_append_receipts(
+        /// Signs nonce-free entry receipts (prefix `"entry"`) for the given
+        /// endorsers (by index).
+        fn sign_entry_receipts(
             &self,
             signers: &[usize],
             instance_id: &[u8; 32],
@@ -621,12 +677,43 @@ mod tests {
             let receipts = signers
                 .iter()
                 .map(|&i| {
-                    let message = receipts::build_append_entry_message(
+                    let message = receipts::build_entry_receipt_message(
                         instance_id,
                         ledger_id,
                         &block.entry,
                         block.index,
                         &block.hash_chain_tail,
+                    );
+                    LedgerReceipt {
+                        key_index: i,
+                        block: block.clone(),
+                        signature: self.sks[i].sign(&message),
+                    }
+                })
+                .collect::<Vec<_>>();
+            LedgerReceipts::new(receipts)
+        }
+
+        /// Signs nonce-bound append receipts (prefix `"append_entry"`) for the
+        /// given endorsers (by index).
+        fn sign_append_receipts(
+            &self,
+            signers: &[usize],
+            instance_id: &[u8; 32],
+            block: &LedgerBlock,
+            nonce: u64,
+            ledger_id: u32,
+        ) -> LedgerReceipts {
+            let receipts = signers
+                .iter()
+                .map(|&i| {
+                    let message = receipts::build_append_receipt_message(
+                        instance_id,
+                        ledger_id,
+                        &block.entry,
+                        block.index,
+                        &block.hash_chain_tail,
+                        nonce,
                     );
                     LedgerReceipt {
                         key_index: i,
@@ -649,12 +736,23 @@ mod tests {
             )
         }
 
-        /// Signs append_entry receipts using the setup's default values.
+        /// Signs nonce-free entry receipts using the setup's default values.
+        fn sign_good_entry_receipts(&self, signers: &[usize]) -> LedgerReceipts {
+            self.sign_entry_receipts(
+                signers,
+                self.verifier.instance_id(),
+                &self.block,
+                self.ledger_id,
+            )
+        }
+
+        /// Signs nonce-bound append receipts using the setup's default values.
         fn sign_good_append_receipts(&self, signers: &[usize]) -> LedgerReceipts {
             self.sign_append_receipts(
                 signers,
                 self.verifier.instance_id(),
                 &self.block,
+                self.nonce,
                 self.ledger_id,
             )
         }
@@ -803,18 +901,175 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // verify_append tests
+    // verify_entry tests (nonce-free entry receipts)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn entry_happy_path_minimum_quorum() {
+        let setup = LedgerSetup::new();
+        let receipts = setup.sign_good_entry_receipts(&[0, 1]);
+        let result = setup
+            .verifier
+            .verify_entry(&receipts, setup.block.index, setup.ledger_id);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), setup.block);
+    }
+
+    #[test]
+    fn entry_fails_bad_ledger_id() {
+        let setup = LedgerSetup::new();
+        let receipts = setup.sign_good_entry_receipts(&[0, 1]);
+        let wrong_ledger_id = setup.ledger_id + 1;
+        let result = setup
+            .verifier
+            .verify_entry(&receipts, setup.block.index, wrong_ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn entry_fails_bad_entry() {
+        let setup = LedgerSetup::new();
+        let mut bad_block = setup.block.clone();
+        bad_block.entry = [0xFF; 32];
+        let good_receipts = setup.sign_good_entry_receipts(&[0]);
+        let bad_receipts = setup.sign_entry_receipts(
+            &[1],
+            setup.verifier.instance_id(),
+            &bad_block,
+            setup.ledger_id,
+        );
+        let combined = LedgerReceipts::new(
+            good_receipts
+                .iter()
+                .chain(bad_receipts.iter())
+                .map(|r| LedgerReceipt {
+                    key_index: r.key_index,
+                    block: r.block.clone(),
+                    signature: r.signature,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let result = setup
+            .verifier
+            .verify_entry(&combined, setup.block.index, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn entry_fails_bad_index() {
+        let setup = LedgerSetup::new();
+        let mut bad_block = setup.block.clone();
+        bad_block.index = 999;
+        let good_receipts = setup.sign_good_entry_receipts(&[0]);
+        let bad_receipts = setup.sign_entry_receipts(
+            &[1],
+            setup.verifier.instance_id(),
+            &bad_block,
+            setup.ledger_id,
+        );
+        let combined = LedgerReceipts::new(
+            good_receipts
+                .iter()
+                .chain(bad_receipts.iter())
+                .map(|r| LedgerReceipt {
+                    key_index: r.key_index,
+                    block: r.block.clone(),
+                    signature: r.signature,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let result = setup
+            .verifier
+            .verify_entry(&combined, setup.block.index, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn entry_fails_bad_hash_chain_tail() {
+        let setup = LedgerSetup::new();
+        let mut bad_block = setup.block.clone();
+        bad_block.hash_chain_tail = [0xCC; 32];
+        let good_receipts = setup.sign_good_entry_receipts(&[0]);
+        let bad_receipts = setup.sign_entry_receipts(
+            &[1],
+            setup.verifier.instance_id(),
+            &bad_block,
+            setup.ledger_id,
+        );
+        let combined = LedgerReceipts::new(
+            good_receipts
+                .iter()
+                .chain(bad_receipts.iter())
+                .map(|r| LedgerReceipt {
+                    key_index: r.key_index,
+                    block: r.block.clone(),
+                    signature: r.signature,
+                })
+                .collect::<Vec<_>>(),
+        );
+        let result = setup
+            .verifier
+            .verify_entry(&combined, setup.block.index, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn entry_fails_bad_instance_id() {
+        let setup = LedgerSetup::new();
+        let wrong_instance_id = [0xFF; 32];
+        let receipts =
+            setup.sign_entry_receipts(&[0, 1], &wrong_instance_id, &setup.block, setup.ledger_id);
+        let result = setup
+            .verifier
+            .verify_entry(&receipts, setup.block.index, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn entry_fails_wrong_requested_index() {
+        let setup = LedgerSetup::new();
+        let receipts = setup.sign_good_entry_receipts(&[0, 1]);
+        let wrong_index = setup.block.index + 1;
+        let result = setup
+            .verifier
+            .verify_entry(&receipts, wrong_index, setup.ledger_id);
+        assert!(matches!(
+            result,
+            Err(VerifyError::UnexpectedIndex { requested, actual })
+                if requested == wrong_index && actual == setup.block.index
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // verify_append tests (nonce-bound append receipts)
     // -----------------------------------------------------------------------
 
     #[test]
     fn append_happy_path_minimum_quorum() {
         let setup = LedgerSetup::new();
         let receipts = setup.sign_good_append_receipts(&[0, 1]);
-        let result = setup
-            .verifier
-            .verify_append(&receipts, setup.block.index, setup.ledger_id);
+        let result = setup.verifier.verify_append(
+            &receipts,
+            &setup.block.entry,
+            setup.nonce,
+            setup.ledger_id,
+        );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), setup.block);
+    }
+
+    #[test]
+    fn append_fails_bad_nonce() {
+        let setup = LedgerSetup::new();
+        let receipts = setup.sign_good_append_receipts(&[0, 1]);
+        let wrong_nonce = setup.nonce + 1;
+        let result = setup.verifier.verify_append(
+            &receipts,
+            &setup.block.entry,
+            wrong_nonce,
+            setup.ledger_id,
+        );
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
     }
 
     #[test]
@@ -822,123 +1077,143 @@ mod tests {
         let setup = LedgerSetup::new();
         let receipts = setup.sign_good_append_receipts(&[0, 1]);
         let wrong_ledger_id = setup.ledger_id + 1;
-        let result = setup
-            .verifier
-            .verify_append(&receipts, setup.block.index, wrong_ledger_id);
+        let result = setup.verifier.verify_append(
+            &receipts,
+            &setup.block.entry,
+            setup.nonce,
+            wrong_ledger_id,
+        );
         assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
     }
 
     #[test]
-    fn append_fails_bad_entry() {
-        let setup = LedgerSetup::new();
-        let mut bad_block = setup.block.clone();
-        bad_block.entry = [0xFF; 32];
-        let good_receipts = setup.sign_good_append_receipts(&[0]);
-        let bad_receipts = setup.sign_append_receipts(
-            &[1],
-            setup.verifier.instance_id(),
-            &bad_block,
-            setup.ledger_id,
-        );
-        let combined = LedgerReceipts::new(
-            good_receipts
-                .iter()
-                .chain(bad_receipts.iter())
-                .map(|r| LedgerReceipt {
-                    key_index: r.key_index,
-                    block: r.block.clone(),
-                    signature: r.signature,
-                })
-                .collect::<Vec<_>>(),
-        );
-        let result = setup
-            .verifier
-            .verify_append(&combined, setup.block.index, setup.ledger_id);
-        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
-    }
-
-    #[test]
-    fn append_fails_bad_index() {
-        let setup = LedgerSetup::new();
-        let mut bad_block = setup.block.clone();
-        bad_block.index = 999;
-        let good_receipts = setup.sign_good_append_receipts(&[0]);
-        let bad_receipts = setup.sign_append_receipts(
-            &[1],
-            setup.verifier.instance_id(),
-            &bad_block,
-            setup.ledger_id,
-        );
-        let combined = LedgerReceipts::new(
-            good_receipts
-                .iter()
-                .chain(bad_receipts.iter())
-                .map(|r| LedgerReceipt {
-                    key_index: r.key_index,
-                    block: r.block.clone(),
-                    signature: r.signature,
-                })
-                .collect::<Vec<_>>(),
-        );
-        let result = setup
-            .verifier
-            .verify_append(&combined, setup.block.index, setup.ledger_id);
-        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
-    }
-
-    #[test]
-    fn append_fails_bad_hash_chain_tail() {
-        let setup = LedgerSetup::new();
-        let mut bad_block = setup.block.clone();
-        bad_block.hash_chain_tail = [0xCC; 32];
-        let good_receipts = setup.sign_good_append_receipts(&[0]);
-        let bad_receipts = setup.sign_append_receipts(
-            &[1],
-            setup.verifier.instance_id(),
-            &bad_block,
-            setup.ledger_id,
-        );
-        let combined = LedgerReceipts::new(
-            good_receipts
-                .iter()
-                .chain(bad_receipts.iter())
-                .map(|r| LedgerReceipt {
-                    key_index: r.key_index,
-                    block: r.block.clone(),
-                    signature: r.signature,
-                })
-                .collect::<Vec<_>>(),
-        );
-        let result = setup
-            .verifier
-            .verify_append(&combined, setup.block.index, setup.ledger_id);
-        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
-    }
-
-    #[test]
-    fn append_fails_bad_instance_id() {
-        let setup = LedgerSetup::new();
-        let wrong_instance_id = [0xFF; 32];
-        let receipts =
-            setup.sign_append_receipts(&[0, 1], &wrong_instance_id, &setup.block, setup.ledger_id);
-        let result = setup
-            .verifier
-            .verify_append(&receipts, setup.block.index, setup.ledger_id);
-        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
-    }
-
-    #[test]
-    fn append_fails_wrong_expected_index() {
+    fn append_not_accepted_as_read_latest() {
         let setup = LedgerSetup::new();
         let receipts = setup.sign_good_append_receipts(&[0, 1]);
-        let wrong_index = setup.block.index + 1;
+        // Append receipts must NOT verify as read_latest (different prefix).
         let result = setup
             .verifier
-            .verify_append(&receipts, wrong_index, setup.ledger_id);
-        assert!(matches!(
-            result,
-            Err(VerifyError::UnexpectedIndex { expected, actual })
-                if expected == wrong_index && actual == setup.block.index
-        ));
+            .verify_read_latest(&receipts, setup.nonce, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn read_latest_not_accepted_as_append() {
+        let setup = LedgerSetup::new();
+        let receipts = setup.sign_good_read_latest_receipts(&[0, 1]);
+        // Read-latest receipts must NOT verify as append (different prefix).
+        let result = setup.verifier.verify_append(
+            &receipts,
+            &setup.block.entry,
+            setup.nonce,
+            setup.ledger_id,
+        );
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn append_fails_wrong_entry() {
+        let setup = LedgerSetup::new();
+        // The endorsers correctly signed an append of setup.block.entry, but
+        // the client asked to append a different value. This models a
+        // coordinator appending an entry other than the one requested.
+        let receipts = setup.sign_good_append_receipts(&[0, 1]);
+        let requested_entry = [0xEE; 32];
+        assert_ne!(requested_entry, setup.block.entry);
+        let result =
+            setup
+                .verifier
+                .verify_append(&receipts, &requested_entry, setup.nonce, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::UnexpectedEntry)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Common edge case tests (verify_ledger_receipts)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn read_latest_fails_no_receipts() {
+        let setup = LedgerSetup::new();
+        let receipts = LedgerReceipts::new(Vec::new());
+        let result = setup
+            .verifier
+            .verify_read_latest(&receipts, setup.nonce, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::NoReceipts)));
+    }
+
+    #[test]
+    fn read_latest_fails_key_index_out_of_bounds() {
+        let setup = LedgerSetup::new();
+        // Sign a valid receipt but with an out-of-bounds key_index.
+        let message = receipts::build_read_latest_receipt_message(
+            setup.verifier.instance_id(),
+            setup.ledger_id,
+            &setup.block.entry,
+            setup.block.index,
+            &setup.block.hash_chain_tail,
+            setup.nonce,
+        );
+        let receipts = LedgerReceipts::new(alloc::vec![LedgerReceipt {
+            key_index: 99, // Only 3 endorsers (indices 0-2).
+            block: setup.block.clone(),
+            signature: setup.sks[0].sign(&message),
+        }]);
+        let result = setup
+            .verifier
+            .verify_read_latest(&receipts, setup.nonce, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::KeyIndexOutOfBounds)));
+    }
+
+    #[test]
+    fn read_latest_fails_duplicate_key_index() {
+        let setup = LedgerSetup::new();
+        let message = receipts::build_read_latest_receipt_message(
+            setup.verifier.instance_id(),
+            setup.ledger_id,
+            &setup.block.entry,
+            setup.block.index,
+            &setup.block.hash_chain_tail,
+            setup.nonce,
+        );
+        // Submit two receipts with the same key_index.
+        let receipts = LedgerReceipts::new(alloc::vec![
+            LedgerReceipt {
+                key_index: 0,
+                block: setup.block.clone(),
+                signature: setup.sks[0].sign(&message),
+            },
+            LedgerReceipt {
+                key_index: 0,
+                block: setup.block.clone(),
+                signature: setup.sks[0].sign(&message),
+            },
+        ]);
+        let result = setup
+            .verifier
+            .verify_read_latest(&receipts, setup.nonce, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::DuplicateKeyIndex)));
+    }
+
+    #[test]
+    fn read_latest_fails_below_quorum() {
+        let setup = LedgerSetup::new();
+        // Only 1 of 3 endorsers — quorum requires 2.
+        let receipts = setup.sign_good_read_latest_receipts(&[0]);
+        let result = setup
+            .verifier
+            .verify_read_latest(&receipts, setup.nonce, setup.ledger_id);
+        assert!(matches!(result, Err(VerifyError::QuorumNotMet(_))));
+    }
+
+    #[test]
+    fn read_latest_succeeds_full_quorum() {
+        let setup = LedgerSetup::new();
+        // All 3 endorsers — above minimum quorum.
+        let receipts = setup.sign_good_read_latest_receipts(&[0, 1, 2]);
+        let result = setup
+            .verifier
+            .verify_read_latest(&receipts, setup.nonce, setup.ledger_id);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), setup.block);
     }
 }

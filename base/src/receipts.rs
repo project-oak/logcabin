@@ -16,12 +16,12 @@
 
 //! Receipt message builders.
 //!
-//! Each function constructs the byte message that is signed by an endorser
+//! Each function constructs the byte message to be signed by an endorser
 //! to produce a receipt. The verifier reconstructs the same message to
 //! verify the signature.
 
-use alloc::vec::Vec;
 use crate::{ConfigId, EntryContents, Sha256Digest};
+use alloc::vec::Vec;
 
 /// Builds the activation receipt message for a new instance.
 ///
@@ -66,12 +66,15 @@ pub fn build_create_ledger_message(instance_id: &ConfigId, ledger_id: u32) -> Ve
     message
 }
 
-/// Builds the append-entry receipt message.
+/// Builds the entry receipt message (nonce-free, timeless).
+///
+/// This receipt is not bound to a nonce, so it can be stored by the
+/// coordinator and served later (e.g. via `ReadByIndex`).
 ///
 /// Format:
-///   `"append_entry" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
+///   `"entry" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
 ///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes)`
-pub fn build_append_entry_message(
+pub fn build_entry_receipt_message(
     instance_id: &ConfigId,
     ledger_id: u32,
     entry: &EntryContents,
@@ -79,7 +82,7 @@ pub fn build_append_entry_message(
     hash_chain_tail: &Sha256Digest,
 ) -> Vec<u8> {
     let mut message = Vec::new();
-    message.extend_from_slice(b"append_entry");
+    message.extend_from_slice(b"entry");
     message.extend_from_slice(instance_id);
     message.extend_from_slice(&ledger_id.to_be_bytes());
     message.extend_from_slice(entry);
@@ -88,13 +91,44 @@ pub fn build_append_entry_message(
     message
 }
 
-/// Builds the read-latest receipt message.
+/// Builds the append receipt message (nonce-bound, from `append_entry`).
+///
+/// This receipt confirms that an append operation was performed.
+///
+/// Format:
+///   `"append_entry" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
+///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes) ||
+///    nonce (8 bytes, BE)`
+pub fn build_append_receipt_message(
+    instance_id: &ConfigId,
+    ledger_id: u32,
+    entry: &EntryContents,
+    index: u64,
+    hash_chain_tail: &Sha256Digest,
+    nonce: u64,
+) -> Vec<u8> {
+    let mut message = Vec::new();
+    message.extend_from_slice(b"append_entry");
+    message.extend_from_slice(instance_id);
+    message.extend_from_slice(&ledger_id.to_be_bytes());
+    message.extend_from_slice(entry);
+    message.extend_from_slice(&index.to_be_bytes());
+    message.extend_from_slice(hash_chain_tail);
+    message.extend_from_slice(&nonce.to_be_bytes());
+    message
+}
+
+/// Builds the read-latest receipt message (nonce-bound, from `read_latest`).
+///
+/// This receipt attests that a read_latest operation was performed.
+/// The prefix `"read_latest"` distinguishes it from an append receipt,
+/// preventing a coordinator from substituting one for the other.
 ///
 /// Format:
 ///   `"read_latest" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
 ///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes) ||
 ///    nonce (8 bytes, BE)`
-pub fn build_read_latest_message(
+pub fn build_read_latest_receipt_message(
     instance_id: &ConfigId,
     ledger_id: u32,
     entry: &EntryContents,
