@@ -50,6 +50,11 @@ fn create_endorsers(n: usize) -> (Vec<Endorser<Uninitialized>>, CohortConfig) {
     (endorsers, config)
 }
 
+/// Returns a non-zero nonce for testing.
+fn nonce() -> u64 {
+    0xDEAD_BEEF_CAFE_BABEu64
+}
+
 /// Collects read_latest receipts from all endorsers into a `LedgerReceipts`.
 fn read_latest_from_cohort(
     endorsers: &[Endorser<Active>],
@@ -64,7 +69,7 @@ fn read_latest_from_cohort(
             LedgerReceipt {
                 key_index: i, // Endorsers have the same order as config keys.
                 block: signed.block.clone(),
-                signature: signed.signature,
+                signature: signed.tip_receipt,
             }
         })
         .collect();
@@ -73,8 +78,8 @@ fn read_latest_from_cohort(
 
 /// Collects append_entry receipts from all endorsers into a `LedgerReceipts`.
 ///
-/// Calls `append_entry` on each endorser and wraps the returned signature
-/// with the resulting block (obtained via a subsequent `read_latest`).
+/// Calls `append_entry` on each endorser and wraps the returned entry receipt
+/// with the block from the result.
 fn append_to_cohort(
     endorsers: &mut [Endorser<Active>],
     ledger_id: u32,
@@ -85,15 +90,11 @@ fn append_to_cohort(
         .iter_mut()
         .enumerate()
         .map(|(i, e)| {
-            let signature = e.append_entry(ledger_id, entry, expected_index).unwrap();
-            // Read back the block to get the full state after append.
-            // TODO: b/476380752 - Review what append_entry returns to avoid
-            // requiring read-after-write.
-            let signed = e.read_latest(ledger_id, 0).unwrap();
+            let result = e.append_entry(ledger_id, entry, expected_index, nonce()).unwrap();
             LedgerReceipt {
                 key_index: i, // Endorsers have the same order as config keys.
-                block: signed.block.clone(),
-                signature,
+                block: result.block.clone(),
+                signature: result.entry_receipt,
             }
         })
         .collect();
@@ -138,6 +139,55 @@ fn verify_with_initial_cohort() {
         .expect("read_latest verification should succeed");
     assert_eq!(read_block.entry, entry);
     assert_eq!(read_block.index, 1);
+}
+
+/// Exercises the tip receipt from append_entry: appends with a nonce, collects
+/// the tip receipt, and verifies it through the verifier.
+#[test]
+fn verify_tip_receipt_from_append() {
+    let (endorsers, config) = create_endorsers(3);
+    let mut active: Vec<_> = endorsers
+        .into_iter()
+        .map(|e| e.activate(config.clone(), None).unwrap())
+        .collect();
+
+    let verifier = Verifier::new(config.clone());
+    let ledger_id = 0;
+    let entry = [0xBBu8; 32];
+    let append_nonce: u64 = 0x1234_5678_9ABC_DEF0;
+
+    // Append with a specific nonce and collect the tip receipts.
+    let tip_receipts: Vec<_> = active
+        .iter_mut()
+        .enumerate()
+        .map(|(i, e)| {
+            let result = e
+                .append_entry(ledger_id, entry, 1, append_nonce)
+                .unwrap();
+            LedgerReceipt {
+                key_index: i,
+                block: result.block.clone(),
+                signature: result.tip_receipt,
+            }
+        })
+        .collect();
+    let tip_ledger_receipts = LedgerReceipts::new(tip_receipts);
+
+    // The tip receipts should verify as a read_latest with the same nonce.
+    let block = verifier
+        .verify_read_latest(&tip_ledger_receipts, append_nonce, ledger_id)
+        .expect("tip receipt from append should verify as read_latest");
+    assert_eq!(block.entry, entry);
+    assert_eq!(block.index, 1);
+
+    // A different nonce should fail.
+    let wrong_nonce: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+    assert!(
+        verifier
+            .verify_read_latest(&tip_ledger_receipts, wrong_nonce, ledger_id)
+            .is_err(),
+        "tip receipt should not verify with a different nonce"
+    );
 }
 
 /// Creates cohort 1, appends an entry, hands over to cohort 2, evolves the

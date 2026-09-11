@@ -145,7 +145,7 @@ is a) already true in original Nimble and b) detectable in the
 finalization/activation trail if the TEE endorser attestations are kept.
 
 Because some members of `c_new` have adopted a different instance ID, and given
-that the receipts for append_entry and read_latest cover the instance ID, these
+that the receipts for entry append and tip (read latest) cover the instance ID, these
 endorsers can't participate in a majority quorum for these operations. If there
 is no such majority (e.g. because there are 3 different partitions), then the
 instance is rendered permanently unusable. This condition is not detected at
@@ -160,3 +160,62 @@ running read_latest immediately after handover.
 | **Downtime**        | `finalize + initialize + activate` RTTs                                          | Coordinator-driven linearization (pause writes, bring a majority of endorsers up to speed) + `finalize + activate` RTTs |
 | **Endorser states** | 4 (`Uninitialized → Initialized → Active → Finalized`)                           | 3 (`Uninitialized → Active → Finalized`)                                                                                |
 | **TCB size**        | Larger (linearization logic, computing max cut, processing appends, extra state) | Smaller (LogCabin core is ~500 lines of Rust excluding comments and tests)                                              |
+
+## Unconditional appends
+
+In the original Nimble protocol, every append requires the client to supply an
+`expected_height` — the index at which the client expects its entry to land. The
+endorser rejects the append if the prediction doesn't match. This creates a
+time-of-check-to-time-of-use (TOCTOU) race when the client is remote from the
+coordinator infrastructure: between discovering the current height and
+submitting the append, other clients may have advanced the height.
+
+LogCabin addresses this by separating `expected_index` from the client-facing
+API. The coordinator — which already serialises appends and knows the current
+height — resolves `expected_index` internally before forwarding to endorsers.
+The client supplies only the entry and a random nonce.
+
+The endorser's `AppendEntry` operation accepts a nonce and atomically produces
+two receipts over the same post-append state:
+
+- An **entry receipt** (nonce-free), proving the entry is committed at a
+  specific index. This receipt is stored by the coordinator and served via
+  `ReadByIndex`.
+- A **tip receipt** (nonce-bound), proving the ledger tip is at this state
+  right now. This receipt is ephemeral — the client uses it to verify that the
+  coordinator actually forwarded the request (preventing replay), then discards
+  it.
+
+The `ReadLatest` operation also produces both receipt types. This allows a
+coordinator to recover an entry receipt that was lost (e.g., after a crash
+between the endorser response and the coordinator persisting it to storage).
+
+See [`docs/unconditional_appends.md`](../../docs/unconditional_appends.md) for
+the full design and security analysis.
+
+### Receipt terminology
+
+LogCabin uses two receipt types, named for what they prove rather than the
+operation that produced them:
+
+| Receipt | Prefix     | Nonce? | Purpose                                                          |
+| ------- | ---------- | ------ | ---------------------------------------------------------------- |
+| Entry   | `"entry"`  | No     | Proves an entry exists at a specific index. Timeless and stored. |
+| Tip     | `"tip"`    | Yes    | Proves the ledger tip is here right now. Ephemeral.              |
+
+This replaces the original Nimble naming:
+- `"append_entry"` → `"entry"` (the receipt is about the entry, not the
+  operation)
+- `"read_latest"` → `"tip"` (the receipt is about the current tip, not the
+  read operation)
+
+Both receipt types share the same base fields (`instance_id`, `ledger_id`,
+`entry`, `index`, `hash_chain_tail`). The tip receipt appends the nonce.
+
+### Differences from Nimble (operations)
+
+|                     | Nimble                                                     | LogCabin                                                                                   |
+| ------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **Append**          | Client must supply `expected_height`                       | `expected_index` resolved by coordinator; client supplies nonce                             |
+| **Atomic append + read** | Described in the paper; not in the reference implementation | Integrated at the endorser level (both `AppendEntry` and `ReadLatest` produce entry + tip receipts) |
+| **Receipt prefixes** | N/A (Nimble uses opaque hashes for signing)                | `"entry"` (nonce-free, stored) and `"tip"` (nonce-bound, ephemeral)                         |

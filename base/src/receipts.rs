@@ -16,7 +16,7 @@
 
 //! Receipt message builders.
 //!
-//! Each function constructs the byte message that is signed by an endorser
+//! Each function constructs the byte message to be signed by an endorser
 //! to produce a receipt. The verifier reconstructs the same message to
 //! verify the signature.
 
@@ -66,12 +66,12 @@ pub fn build_create_ledger_message(instance_id: &ConfigId, ledger_id: u32) -> Ve
     message
 }
 
-/// Builds the append-entry receipt message.
+/// Builds the entry receipt message.
 ///
 /// Format:
-///   `"append_entry" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
+///   `"entry" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
 ///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes)`
-pub fn build_append_entry_message(
+pub fn build_entry_receipt_message(
     instance_id: &ConfigId,
     ledger_id: u32,
     entry: &EntryContents,
@@ -79,7 +79,7 @@ pub fn build_append_entry_message(
     hash_chain_tail: &Sha256Digest,
 ) -> Vec<u8> {
     let mut message = Vec::new();
-    message.extend_from_slice(b"append_entry");
+    message.extend_from_slice(b"entry");
     message.extend_from_slice(instance_id);
     message.extend_from_slice(&ledger_id.to_be_bytes());
     message.extend_from_slice(entry);
@@ -88,13 +88,13 @@ pub fn build_append_entry_message(
     message
 }
 
-/// Builds the read-latest receipt message.
+/// Builds the tip receipt message.
 ///
 /// Format:
-///   `"read_latest" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
+///   `"tip" || instance_id (32 bytes) || ledger_id (4 bytes, BE) ||
 ///    entry (32 bytes) || index (8 bytes, BE) || hash_chain_tail (32 bytes) ||
 ///    nonce (8 bytes, BE)`
-pub fn build_read_latest_message(
+pub fn build_tip_receipt_message(
     instance_id: &ConfigId,
     ledger_id: u32,
     entry: &EntryContents,
@@ -103,7 +103,7 @@ pub fn build_read_latest_message(
     nonce: u64,
 ) -> Vec<u8> {
     let mut message = Vec::new();
-    message.extend_from_slice(b"read_latest");
+    message.extend_from_slice(b"tip");
     message.extend_from_slice(instance_id);
     message.extend_from_slice(&ledger_id.to_be_bytes());
     message.extend_from_slice(entry);

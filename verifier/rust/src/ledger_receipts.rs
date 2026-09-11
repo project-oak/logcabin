@@ -60,7 +60,7 @@ impl Deref for LedgerReceipt {
 /// [`CohortConfig`], enabling O(1) key lookup during verification.
 ///
 /// **Note:** This type does not validate key index uniqueness or bounds.
-/// Those checks are performed by [`Verifier::verify_read_latest`], which
+/// Those checks are performed when verifying a tip receipt (via [`Verifier::verify_read_latest`]), which
 /// has access to the [`CohortConfig`] and can safely allocate a bitmap
 /// for deduplication.
 pub struct LedgerReceipts {

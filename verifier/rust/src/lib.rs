@@ -152,7 +152,7 @@ impl Verifier {
         // but it could be part of a minority of endorsers disagreeing. The
         // majority could still agree. Look for that majority.
         let reference = ledger_receipts.first().ok_or(VerifyError::NoReceipts)?;
-        let expected_message = receipts::build_read_latest_message(
+        let expected_message = receipts::build_tip_receipt_message(
             &self.instance_id,
             ledger_id,
             &reference.entry,
@@ -188,7 +188,7 @@ impl Verifier {
     ) -> Result<LedgerBlock, VerifyError> {
         // Use the first receipt as reference to compare against.
         let reference = ledger_receipts.first().ok_or(VerifyError::NoReceipts)?;
-        let expected_message = receipts::build_append_entry_message(
+        let expected_message = receipts::build_entry_receipt_message(
             &self.instance_id,
             ledger_id,
             &reference.entry,
@@ -592,7 +592,7 @@ mod tests {
             let receipts = signers
                 .iter()
                 .map(|&i| {
-                    let message = receipts::build_read_latest_message(
+                    let message = receipts::build_tip_receipt_message(
                         instance_id,
                         ledger_id,
                         &block.entry,
@@ -621,7 +621,7 @@ mod tests {
             let receipts = signers
                 .iter()
                 .map(|&i| {
-                    let message = receipts::build_append_entry_message(
+                    let message = receipts::build_entry_receipt_message(
                         instance_id,
                         ledger_id,
                         &block.entry,
