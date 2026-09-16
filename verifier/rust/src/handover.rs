@@ -94,14 +94,12 @@ pub struct QuorumError {
     pub required: usize,
 }
 
-/// Error returned by [`CohortHandover::verify`] and
+/// Error returned by
 /// [`Verifier::apply_handover`](crate::Verifier::apply_handover).
 #[derive(Debug)]
 pub enum HandoverError {
     /// The finalization's endorser keys do not match the verifier's trusted
-    /// config. Only returned by
-    /// [`Verifier::apply_handover`](crate::Verifier::apply_handover), never
-    /// by [`CohortHandover::verify`].
+    /// config, so the handover does not continue the trusted lineage.
     FinalizationConfigMismatch,
     /// Not enough valid finalization receipts from the outgoing cohort.
     FinalizationQuorumNotMet(QuorumError),
@@ -156,14 +154,22 @@ impl CohortHandover {
     /// 2. A strict majority of the incoming cohort signed valid
     ///    activation receipts.
     ///
-    /// This validates the handover's internal consistency. It does NOT
-    /// check whether the finalization cohort matches the currently trusted
-    /// cohort — that is the caller's responsibility (e.g.,
-    /// [`Verifier::apply_handover`](crate::Verifier::apply_handover)).
+    /// This establishes internal consistency only — **not** lineage. Both
+    /// the previous config ID and the finalization quorum denominator are
+    /// derived from the caller-supplied finalization set, so on its own this
+    /// check is satisfiable by an entirely fabricated outgoing cohort (e.g.
+    /// a single freshly-generated key signing its own finalization).
+    ///
+    /// Lineage is established by the caller pinning the finalization to the
+    /// currently trusted config, as
+    /// [`Verifier::apply_handover`](crate::Verifier::apply_handover) does.
+    /// That pin fixes the exact key set, and hence the quorum denominator.
+    /// For this reason the method is crate-private: `apply_handover` is the
+    /// only correct entry point.
     ///
     /// On success, consumes the handover and returns the new
     /// [`CohortConfig`].
-    pub fn verify(self, instance_id: &ConfigId) -> Result<CohortConfig, HandoverError> {
+    pub(crate) fn verify(self, instance_id: &ConfigId) -> Result<CohortConfig, HandoverError> {
         let prev_config_id = self.finalization.config_id();
         let new_config_id = self.activation.new_config_id();
 

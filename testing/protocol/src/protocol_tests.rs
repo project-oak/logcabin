@@ -50,64 +50,115 @@ fn create_endorsers(n: usize) -> (Vec<Endorser<Uninitialized>>, CohortConfig) {
     (endorsers, config)
 }
 
-/// Collects read_latest receipts from all endorsers into a `LedgerReceipts`.
+/// Returns a non-zero nonce for testing.
+fn nonce() -> u64 {
+    0xDEAD_BEEF_CAFE_BABEu64
+}
+
+/// Both receipt collections produced by a `read_latest` across a cohort.
+///
+/// An endorser returns two receipts per read: a nonce-bound read receipt
+/// (prefix `"read_latest"`) proving freshness, and a nonce-free entry receipt
+/// (prefix `"entry"`) that the coordinator may store and serve later.
+struct CohortReadReceipts {
+    /// Nonce-bound receipts, verified with [`Verifier::verify_read_latest`].
+    read: LedgerReceipts,
+    /// Timeless receipts, verified with [`Verifier::verify_entry`].
+    entry: LedgerReceipts,
+}
+
+/// Both receipt collections produced by an `append_entry` across a cohort.
+///
+/// An endorser returns two receipts per append: a nonce-bound append receipt
+/// (prefix `"append_entry"`) proving the operation was performed, and a
+/// nonce-free entry receipt (prefix `"entry"`) that the coordinator may store
+/// and serve later.
+struct CohortAppendReceipts {
+    /// Nonce-bound receipts, verified with [`Verifier::verify_append`].
+    append: LedgerReceipts,
+    /// Timeless receipts, verified with [`Verifier::verify_entry`].
+    entry: LedgerReceipts,
+}
+
+/// Calls `read_latest` on every endorser, collecting both receipt sets.
 fn read_latest_from_cohort(
     endorsers: &[Endorser<Active>],
     ledger_id: u32,
     nonce: u64,
-) -> LedgerReceipts {
-    let receipts: Vec<_> = endorsers
+) -> CohortReadReceipts {
+    let results: Vec<_> = endorsers
         .iter()
-        .enumerate()
-        .map(|(i, e)| {
-            let signed = e.read_latest(ledger_id, nonce).unwrap();
-            LedgerReceipt {
-                key_index: i, // Endorsers have the same order as config keys.
-                block: signed.block.clone(),
-                signature: signed.signature,
-            }
-        })
+        .map(|e| e.read_latest(ledger_id, nonce).unwrap())
         .collect();
-    LedgerReceipts::new(receipts)
+
+    // Endorsers have the same order as config keys, so the positional index
+    // is the key index.
+    let read_receipts =
+        LedgerReceipts::new(results.iter().enumerate().map(|(i, r)| LedgerReceipt {
+            key_index: i,
+            block: r.block.clone(),
+            signature: r.read_receipt,
+        }));
+    let entry_receipts =
+        LedgerReceipts::new(results.iter().enumerate().map(|(i, r)| LedgerReceipt {
+            key_index: i,
+            block: r.block.clone(),
+            signature: r.entry_receipt,
+        }));
+
+    CohortReadReceipts {
+        read: read_receipts,
+        entry: entry_receipts,
+    }
 }
 
-/// Collects append_entry receipts from all endorsers into a `LedgerReceipts`.
-///
-/// Calls `append_entry` on each endorser and wraps the returned signature
-/// with the resulting block (obtained via a subsequent `read_latest`).
+/// Calls `append_entry` on every endorser, collecting both receipt sets.
 fn append_to_cohort(
     endorsers: &mut [Endorser<Active>],
     ledger_id: u32,
     entry: EntryContents,
     expected_index: u64,
-) -> LedgerReceipts {
-    let receipts: Vec<_> = endorsers
+    nonce: u64,
+) -> CohortAppendReceipts {
+    let results: Vec<_> = endorsers
         .iter_mut()
-        .enumerate()
-        .map(|(i, e)| {
-            let signature = e.append_entry(ledger_id, entry, expected_index).unwrap();
-            // Read back the block to get the full state after append.
-            // TODO: b/476380752 - Review what append_entry returns to avoid
-            // requiring read-after-write.
-            let signed = e.read_latest(ledger_id, 0).unwrap();
-            LedgerReceipt {
-                key_index: i, // Endorsers have the same order as config keys.
-                block: signed.block.clone(),
-                signature,
-            }
+        .map(|e| {
+            e.append_entry(ledger_id, entry, expected_index, nonce)
+                .unwrap()
         })
         .collect();
-    LedgerReceipts::new(receipts)
+
+    // Endorsers have the same order as config keys, so the positional index
+    // is the key index.
+    let append_receipts =
+        LedgerReceipts::new(results.iter().enumerate().map(|(i, r)| LedgerReceipt {
+            key_index: i,
+            block: r.block.clone(),
+            signature: r.append_receipt,
+        }));
+    let entry_receipts =
+        LedgerReceipts::new(results.iter().enumerate().map(|(i, r)| LedgerReceipt {
+            key_index: i,
+            block: r.block.clone(),
+            signature: r.entry_receipt,
+        }));
+
+    CohortAppendReceipts {
+        append: append_receipts,
+        entry: entry_receipts,
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-// TODO: b/476380752 - Add numerous integration tests here.
-
-/// Creates an initial cohort, appends an entry, verifies the append, then
-/// reads the latest entry and verifies the read.
+/// Creates an initial cohort, appends an entry, then reads it back, verifying
+/// every receipt set the protocol produces.
+///
+/// An append yields two receipt sets (nonce-bound append, timeless entry) and
+/// so does a read (nonce-bound read, timeless entry). This test verifies all
+/// four independently and asserts they describe the same ledger block.
 #[test]
 fn verify_with_initial_cohort() {
     // Create and activate a 3-endorser cohort.
@@ -121,23 +172,119 @@ fn verify_with_initial_cohort() {
     let verifier = Verifier::new(config.clone());
     let ledger_id = 0;
 
-    // Append an entry and verify.
+    // ----------------------------------------------------------------------
+    // Append an entry; verify both receipt sets it produces.
+    // ----------------------------------------------------------------------
     let entry = [0xAAu8; 32];
-    let append_receipts = append_to_cohort(&mut active, ledger_id, entry, 1);
+    let append_nonce = nonce();
+    let appended = append_to_cohort(&mut active, ledger_id, entry, 1, append_nonce);
+
     let append_block = verifier
-        .verify_append(&append_receipts, 1, ledger_id)
-        .expect("append verification should succeed");
+        .verify_append(&appended.append, &entry, append_nonce, ledger_id)
+        .expect("nonce-bound append receipts should verify");
+    let append_entry_block = verifier
+        .verify_entry(&appended.entry, 1, ledger_id)
+        .expect("timeless entry receipts from append should verify");
+
     assert_eq!(append_block.entry, entry);
     assert_eq!(append_block.index, 1);
+    assert_eq!(
+        append_block, append_entry_block,
+        "both receipt sets from the append must describe the same block"
+    );
 
-    // Read latest and verify.
-    let nonce = 42;
-    let read_receipts = read_latest_from_cohort(&active, ledger_id, nonce);
+    // ----------------------------------------------------------------------
+    // Read the entry back; verify both receipt sets it produces.
+    // ----------------------------------------------------------------------
+    let read_nonce = 42;
+    let read = read_latest_from_cohort(&active, ledger_id, read_nonce);
+
     let read_block = verifier
-        .verify_read_latest(&read_receipts, nonce, ledger_id)
-        .expect("read_latest verification should succeed");
-    assert_eq!(read_block.entry, entry);
-    assert_eq!(read_block.index, 1);
+        .verify_read_latest(&read.read, read_nonce, ledger_id)
+        .expect("nonce-bound read receipts should verify");
+    let read_entry_block = verifier
+        .verify_entry(&read.entry, 1, ledger_id)
+        .expect("timeless entry receipts from read should verify");
+
+    assert_eq!(
+        read_block, read_entry_block,
+        "both receipt sets from the read must describe the same block"
+    );
+
+    // ----------------------------------------------------------------------
+    // All four receipt sets must agree on the ledger state.
+    // ----------------------------------------------------------------------
+    assert_eq!(
+        append_block, read_block,
+        "append and read receipts must describe the same block"
+    );
+}
+
+/// Exercises the nonce-bound receipt from append_entry: appends with a nonce,
+/// collects the nonce-bound receipts, and verifies they are accepted by
+/// verify_append but rejected by verify_read_latest.
+///
+/// This is the core security property: a coordinator cannot substitute a
+/// read_latest call for an append_entry call, because the signed prefixes
+/// differ ("append_entry" vs "read_latest").
+#[test]
+fn verify_append_receipt_prefix_separation() {
+    let (endorsers, config) = create_endorsers(3);
+    let mut active: Vec<_> = endorsers
+        .into_iter()
+        .map(|e| e.activate(config.clone(), None).unwrap())
+        .collect();
+
+    let verifier = Verifier::new(config.clone());
+    let ledger_id = 0;
+    let entry = [0xBBu8; 32];
+    let append_nonce: u64 = 0x1234_5678_9ABC_DEF0;
+
+    let appended = append_to_cohort(&mut active, ledger_id, entry, 1, append_nonce);
+
+    // 1. The append receipts should verify with verify_append.
+    let block = verifier
+        .verify_append(&appended.append, &entry, append_nonce, ledger_id)
+        .expect("append receipt should verify with verify_append");
+    assert_eq!(block.entry, entry);
+    assert_eq!(block.index, 1);
+
+    // 2. The same receipts must NOT verify as read_latest receipts.
+    //    This is the key security property: different prefixes prevent substitution.
+    assert!(
+        verifier
+            .verify_read_latest(&appended.append, append_nonce, ledger_id)
+            .is_err(),
+        "append receipt must not verify as read_latest (different prefix)"
+    );
+
+    // 3. Nor may they be replayed as timeless entry receipts.
+    assert!(
+        verifier
+            .verify_entry(&appended.append, 1, ledger_id)
+            .is_err(),
+        "append receipt must not verify as an entry receipt (different prefix)"
+    );
+
+    // 4. A different nonce should also fail.
+    let wrong_nonce: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+    assert!(
+        verifier
+            .verify_append(&appended.append, &entry, wrong_nonce, ledger_id)
+            .is_err(),
+        "append receipt should not verify with a different nonce"
+    );
+
+    // 5. A different entry must be rejected, even with the right nonce. This
+    //    is what stops a coordinator from appending a value other than the
+    //    one the client requested.
+    let other_entry = [0xCCu8; 32];
+    assert!(
+        verifier
+            .verify_append(&appended.append, &other_entry, append_nonce, ledger_id)
+            .is_err(),
+        "append receipt should not verify against an entry the client never requested"
+    );
 }
 
 /// Creates cohort 1, appends an entry, hands over to cohort 2, evolves the
@@ -160,7 +307,7 @@ fn verify_after_handover() {
     // Step 2: Append an entry on all endorsers.
     // -----------------------------------------------------------------------
     let entry = [0xBBu8; 32];
-    let _ = append_to_cohort(&mut c1_active, 0, entry, 1);
+    let _ = append_to_cohort(&mut c1_active, 0, entry, 1, nonce());
 
     // -----------------------------------------------------------------------
     // Step 3: Finalize cohort 1, activate cohort 2.
@@ -225,13 +372,22 @@ fn verify_after_handover() {
     assert!(verifier.trusted_config().keys().eq(c2_config.keys()));
 
     // -----------------------------------------------------------------------
-    // Step 5: Verify read_latest from cohort 2.
+    // Step 5: Verify read_latest from cohort 2, both receipt sets.
     // -----------------------------------------------------------------------
-    let nonce = 99;
-    let read_receipts = read_latest_from_cohort(&c2_active, 0, nonce);
+    let read_nonce = 99;
+    let read = read_latest_from_cohort(&c2_active, 0, read_nonce);
+
     let read_block = verifier
-        .verify_read_latest(&read_receipts, nonce, 0)
+        .verify_read_latest(&read.read, read_nonce, 0)
         .expect("read_latest from new cohort should verify");
+    let read_entry_block = verifier
+        .verify_entry(&read.entry, 1, 0)
+        .expect("entry receipts from new cohort should verify");
+
     assert_eq!(read_block.entry, entry);
     assert_eq!(read_block.index, 1);
+    assert_eq!(
+        read_block, read_entry_block,
+        "both receipt sets from the new cohort must describe the same block"
+    );
 }

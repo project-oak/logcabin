@@ -24,16 +24,16 @@ use alloc::format;
 use alloc::vec::Vec;
 use endorser_micro_rpc_service::logcabin::proto::{
     endorser::State as EndorserStateProto, verifying_key::Key as VerifyingKeyProtoOneOf,
-    ActiveState as ActiveStateProto, CohortConfig as CohortConfigProto,
+    ActiveState as ActiveStateProto, AppendEntryResponse, CohortConfig as CohortConfigProto,
     CohortTakeOver as CohortTakeOverProto, Endorser as EndorserProto,
     EndorserFinalization as EndorserFinalizationProto, FinalizedState as FinalizedStateProto,
-    Ledger as LedgerProto, UninitializedState as UninitializedStateProto,
-    VerifyingKey as VerifyingKeyProto,
+    Ledger as LedgerProto, LedgerBlock as LedgerBlockProto, ReadLatestResponse,
+    UninitializedState as UninitializedStateProto, VerifyingKey as VerifyingKeyProto,
 };
 use logcabin_endorser_core::{
-    Active, CohortConfig, CohortFinalization, CohortTakeOver, ConfigId, EndorserData,
+    Active, AppendResult, CohortConfig, CohortFinalization, CohortTakeOver, ConfigId, EndorserData,
     EndorserFinalization, EntryContents, Finalized, InvalidConfigError, LedgerBlock, Ledgers,
-    Sha256Digest, Uninitialized,
+    ReadLatestResult, Sha256Digest, Uninitialized,
 };
 use micro_rpc::{Status, StatusCode};
 
@@ -89,6 +89,43 @@ impl From<&BoundEndorser<Finalized>> for EndorserProto {
             finalization_receipt: bound.endorser.finalization_receipt().to_bytes().to_vec(),
         }));
         proto
+    }
+}
+
+/// Conversion trait for types that can be converted into proto messages.
+///
+/// This trait works around Rust's orphan rule: we cannot write
+/// `impl From<AppendResult> for AppendEntryResponse` in this crate because
+/// neither type is defined here. Instead, we define a crate-local trait.
+pub(crate) trait IntoProto<T> {
+    fn into_proto(self) -> T;
+}
+
+impl IntoProto<AppendEntryResponse> for AppendResult {
+    fn into_proto(self) -> AppendEntryResponse {
+        AppendEntryResponse {
+            block: Some(LedgerBlockProto {
+                entry: self.block.entry.to_vec(),
+                index: self.block.index,
+                hash_chain_tail: self.block.hash_chain_tail.to_vec(),
+            }),
+            entry_receipt: self.entry_receipt.to_bytes().to_vec(),
+            append_receipt: self.append_receipt.to_bytes().to_vec(),
+        }
+    }
+}
+
+impl IntoProto<ReadLatestResponse> for ReadLatestResult {
+    fn into_proto(self) -> ReadLatestResponse {
+        ReadLatestResponse {
+            block: Some(LedgerBlockProto {
+                entry: self.block.entry.to_vec(),
+                index: self.block.index,
+                hash_chain_tail: self.block.hash_chain_tail.to_vec(),
+            }),
+            entry_receipt: self.entry_receipt.to_bytes().to_vec(),
+            read_receipt: self.read_receipt.to_bytes().to_vec(),
+        }
     }
 }
 

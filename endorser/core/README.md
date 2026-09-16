@@ -145,7 +145,7 @@ is a) already true in original Nimble and b) detectable in the
 finalization/activation trail if the TEE endorser attestations are kept.
 
 Because some members of `c_new` have adopted a different instance ID, and given
-that the receipts for append_entry and read_latest cover the instance ID, these
+that the receipts for entry append and read latest cover the instance ID, these
 endorsers can't participate in a majority quorum for these operations. If there
 is no such majority (e.g. because there are 3 different partitions), then the
 instance is rendered permanently unusable. This condition is not detected at
@@ -160,3 +160,79 @@ running read_latest immediately after handover.
 | **Downtime**        | `finalize + initialize + activate` RTTs                                          | Coordinator-driven linearization (pause writes, bring a majority of endorsers up to speed) + `finalize + activate` RTTs |
 | **Endorser states** | 4 (`Uninitialized → Initialized → Active → Finalized`)                           | 3 (`Uninitialized → Active → Finalized`)                                                                                |
 | **TCB size**        | Larger (linearization logic, computing max cut, processing appends, extra state) | Smaller (LogCabin core is ~500 lines of Rust excluding comments and tests)                                              |
+
+## Unconditional appends
+
+In the original Nimble protocol, every append requires the client to supply an
+`expected_height` — the index at which the client expects its entry to land. The
+endorser rejects the append if the prediction doesn't match. This creates a
+time-of-check-to-time-of-use (TOCTOU) race when the client is remote from the
+coordinator infrastructure: between discovering the current height and
+submitting the append, other clients may have advanced the height.
+
+LogCabin addresses this by separating `expected_index` from the client-facing
+API. The coordinator — which already serialises appends and knows the current
+height — resolves `expected_index` internally before forwarding to endorsers.
+The client supplies only the entry and a random nonce.
+
+The endorser's `AppendEntry` operation accepts a nonce and atomically produces
+two receipts over the same post-append state:
+
+- An **entry receipt** (nonce-free, prefix `"entry"`), proving the entry is
+  committed at a specific index. This receipt is stored by the coordinator and
+  served via `ReadByIndex`.
+- An **append receipt** (nonce-bound, prefix `"append_entry"`), proving that an
+  append operation was actually executed. This receipt is ephemeral — the client
+  uses it to verify that the coordinator forwarded its request as an append
+  (preventing both replay and operation substitution), then discards it.
+
+The `ReadLatest` operation also produces both an entry receipt and a nonce-bound
+receipt (prefix `"read_latest"`). The entry receipt allows a coordinator to
+recover one that was lost (e.g., after a crash between the endorser response and
+the coordinator persisting it to storage). The distinct `"read_latest"` prefix
+ensures this receipt cannot be confused with an append receipt.
+
+See [`docs/unconditional_appends.md`](../../docs/unconditional_appends.md) for
+the full design and security analysis.
+
+#### Client requirement: nonces must be random and never reused
+
+> [!IMPORTANT] Clients **must** draw every nonce independently at random from a
+> CSPRNG over the full 64-bit range. This is load-bearing, not hygiene — the
+> replay protection above is void without it.
+
+The nonce is signed alongside the entry, so reusing a
+`(ledger_id, entry, nonce)` triple turns an earlier append receipt into a valid
+receipt for the new request. An untrusted coordinator can drop the append,
+replay the old receipt, and the client's verification still succeeds while the
+ledger never advances. Repeated payloads such as heartbeats are the most
+exposed, since the entry naturally recurs.
+
+Predictable nonces fail differently: a coordinator that can guess them can
+pre-execute operations and serve banked receipts later, defeating freshness.
+Counters and timestamps are unsuitable as nonces.
+
+### Receipt terminology
+
+LogCabin uses three receipt types, with operation-specific prefixes to prevent a
+coordinator from substituting one operation for another:
+
+| Receipt     | Prefix           | Nonce? | Purpose                                                                 |
+| ----------- | ---------------- | ------ | ----------------------------------------------------------------------- |
+| Entry       | `"entry"`        | No     | Proves an entry exists at a specific index. Timeless and stored.        |
+| Append      | `"append_entry"` | Yes    | Proves an append was executed. Ephemeral, returned to client.           |
+| Read-latest | `"read_latest"`  | Yes    | Proves the ledger was read. Ephemeral, used for freshness verification. |
+
+All three receipt types share the same base fields (`instance_id`, `ledger_id`,
+`entry`, `index`, `hash_chain_tail`). The nonce-bound receipts (append and
+read-latest) append the nonce. The distinct prefixes are critical: they
+cryptographically bind the receipt to the operation that produced it, preventing
+a coordinator from calling `read_latest` in place of `append_entry`.
+
+### Differences from Nimble (operations)
+
+|                          | Nimble                                                                                                                                                                                                             | LogCabin                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Append**               | Client must supply `expected_height`                                                                                                                                                                               | `expected_index` resolved by coordinator; client supplies nonce                                                                                                        |
+| **Atomic append + read** | Described in the paper (takes `expected_height`); not in the reference implementation                                                                                                                              | Integrated at the endorser level: takes a client-supplied nonce instead of `expected_index` (both `AppendEntry` and `ReadLatest` produce entry + nonce-bound receipts) |
+| **Receipt prefixes**     | No prefixes, but append and read _are_ separated: both sign `group_identity \|\| view \|\| handle \|\| X`, where `X` is `metablock.hash()` for `append` and `tail_hash.digest_with_bytes(nonce)` for `read_latest` | `"entry"` (nonce-free, stored), `"append_entry"` and `"read_latest"` (nonce-bound, ephemeral)                                                                          |

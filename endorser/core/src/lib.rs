@@ -29,9 +29,10 @@ extern crate alloc;
 
 mod ledger;
 mod takeover;
+
 use logcabin_base::receipts;
 
-pub use ledger::{Ledgers, SignedLedgerBlock};
+pub use ledger::{AppendResult, Ledgers, ReadLatestResult};
 pub use logcabin_base::{
     CohortConfig, CohortData, CohortFinalization, ConfigId, EndorserData, EndorserFinalization,
     EntryContents, InvalidConfigError, LedgerBlock, Sha256Digest,
@@ -237,14 +238,16 @@ impl Endorser<Active> {
     ///   - `index ← index + 1`
     ///   - `entry ← new entry`
     ///
-    /// Returns the ECDSA P-256 signature (RAW R || S) over the
-    /// `append_entry` receipt message (see [`receipts`]).
+    /// Returns an [`AppendResult`] containing the entry receipt (nonce-free)
+    /// and the append receipt (nonce-bound, prefix `"append_entry"`) over the
+    /// post-append state.
     pub fn append_entry(
         &mut self,
         ledger_id: u32,
         entry: EntryContents,
         expected_index: u64,
-    ) -> Result<Signature, AppendEntryError> {
+        nonce: u64,
+    ) -> Result<AppendResult, AppendEntryError> {
         let block =
             self.state
                 .ledgers
@@ -253,7 +256,10 @@ impl Endorser<Active> {
                     ledger_id,
                 }))?;
 
-        let new_index = block.index + 1;
+        let new_index = block
+            .index
+            .checked_add(1)
+            .ok_or(AppendEntryError::IndexOverflow)?;
         if expected_index != new_index {
             return Err(AppendEntryError::WrongIndex {
                 expected: expected_index,
@@ -275,37 +281,41 @@ impl Endorser<Active> {
         block.index = new_index;
         block.entry = entry;
 
-        let message = receipts::build_append_entry_message(
+        Ok(AppendResult::new(
+            &self.state.signing_key,
             &self.state.instance_id,
             ledger_id,
             &entry,
             new_index,
             &new_tail,
-        );
-        Ok(self.state.signing_key.sign(&message))
+            nonce,
+        ))
     }
 
     /// Reads the latest entry from a ledger.
     ///
-    /// Returns a [`SignedLedgerBlock`] containing the current ledger state
-    /// and an ECDSA P-256 signature binding it to the supplied nonce.
+    /// Returns a [`ReadLatestResult`] containing the entry receipt
+    /// (nonce-free) and the read receipt (nonce-bound, prefix
+    /// `"read_latest"`) over the current state.
     pub fn read_latest(
         &self,
         ledger_id: u32,
         nonce: u64,
-    ) -> Result<SignedLedgerBlock, LedgerNotFoundError> {
+    ) -> Result<ReadLatestResult, LedgerNotFoundError> {
         let block: &LedgerBlock = self
             .state
             .ledgers
             .get(&ledger_id)
             .ok_or(LedgerNotFoundError { ledger_id })?;
 
-        Ok(SignedLedgerBlock::new(
-            block,
-            nonce,
-            ledger_id,
-            &self.state.instance_id,
+        Ok(ReadLatestResult::new(
             &self.state.signing_key,
+            &self.state.instance_id,
+            ledger_id,
+            &block.entry,
+            block.index,
+            &block.hash_chain_tail,
+            nonce,
         ))
     }
 
@@ -505,6 +515,8 @@ pub enum AppendEntryError {
     LedgerNotFound(LedgerNotFoundError),
     /// The expected index does not match the next block index.
     WrongIndex { expected: u64, actual: u64 },
+    /// The ledger is at `u64::MAX` and cannot accept another entry.
+    IndexOverflow,
 }
 
 #[cfg(test)]
@@ -516,6 +528,11 @@ mod tests {
     use logcabin_base::compute_config_id;
     use p256::ecdsa::signature::Verifier;
     use sha2::Digest;
+
+    /// Returns a non-zero nonce for testing.
+    fn nonce() -> u64 {
+        0xDEAD_BEEF_CAFE_BABEu64
+    }
 
     fn sorted_config(mut keys: std::vec::Vec<VerifyingKey>) -> CohortConfig {
         keys.sort_by(|a, b| a.to_sec1_bytes().as_ref().cmp(b.to_sec1_bytes().as_ref()));
@@ -704,7 +721,10 @@ mod tests {
         active.create_ledger(ledger_id).unwrap();
 
         let entry = [0xABu8; 32];
-        let sig = active.append_entry(ledger_id, entry, 1).unwrap();
+        let test_nonce = nonce();
+        let result = active
+            .append_entry(ledger_id, entry, 1, test_nonce)
+            .unwrap();
 
         // Compute expected new tail: SHA256(old_tail || old_entry).
         // After create_ledger, old_tail = [0;32], old_entry = [0;32].
@@ -716,16 +736,29 @@ mod tests {
         };
 
         let instance_id = compute_config_id([vk].iter());
-        let message = receipts::build_append_entry_message(
+
+        // 1. Verify entry receipt (nonce-free).
+        let entry_message = receipts::build_entry_receipt_message(
             &instance_id,
             ledger_id,
             &entry,
             1,
             &expected_tail,
         );
+        vk.verify(&entry_message, &result.entry_receipt)
+            .expect("append_entry entry receipt must verify");
 
-        vk.verify(&message, &sig)
-            .expect("append_entry receipt must verify");
+        // 2. Verify append receipt (nonce-bound, prefix "append_entry").
+        let append_message = receipts::build_append_receipt_message(
+            &instance_id,
+            ledger_id,
+            &entry,
+            1,
+            &expected_tail,
+            test_nonce,
+        );
+        vk.verify(&append_message, &result.append_receipt)
+            .expect("append_entry append receipt must verify");
     }
 
     #[test]
@@ -738,7 +771,9 @@ mod tests {
         active.create_ledger(1).unwrap();
 
         // First append should have expected_index = 1, pass 0 instead.
-        let err = active.append_entry(1, [0xAAu8; 32], 0).unwrap_err();
+        let err = active
+            .append_entry(1, [0xAAu8; 32], 0, nonce())
+            .unwrap_err();
         match err {
             AppendEntryError::WrongIndex { expected, actual } => {
                 assert_eq!(expected, 0);
@@ -749,6 +784,24 @@ mod tests {
     }
 
     #[test]
+    fn append_entry_index_overflow_fails() {
+        let endorser = Endorser::new();
+        let vk = *endorser.verifying_key();
+        let mut active = endorser
+            .activate(sorted_config(std::vec![vk]), None)
+            .unwrap();
+        active.create_ledger(1).unwrap();
+
+        // Unreachable in normal operation; forced here to exercise the guard.
+        active.state.ledgers.get_mut(&1).unwrap().index = u64::MAX;
+
+        let err = active
+            .append_entry(1, [0xAAu8; 32], 0, nonce())
+            .unwrap_err();
+        assert!(matches!(err, AppendEntryError::IndexOverflow));
+    }
+
+    #[test]
     fn append_entry_ledger_not_found_fails() {
         let endorser = Endorser::new();
         let vk = *endorser.verifying_key();
@@ -756,7 +809,9 @@ mod tests {
             .activate(sorted_config(std::vec![vk]), None)
             .unwrap();
 
-        let err = active.append_entry(99, [0xAAu8; 32], 1).unwrap_err();
+        let err = active
+            .append_entry(99, [0xAAu8; 32], 1, nonce())
+            .unwrap_err();
         match err {
             AppendEntryError::LedgerNotFound(err) => {
                 assert_eq!(err.ledger_id, 99);
@@ -778,10 +833,11 @@ mod tests {
         let entry_b = [0xBBu8; 32];
 
         // Append entry A (index 1).
-        active.append_entry(1, entry_a, 1).unwrap();
+        active.append_entry(1, entry_a, 1, nonce()).unwrap();
 
         // Append entry B (index 2) — the tail should chain from entry A.
-        let sig = active.append_entry(1, entry_b, 2).unwrap();
+        let test_nonce = nonce();
+        let result = active.append_entry(1, entry_b, 2, test_nonce).unwrap();
 
         // Manually compute the expected tail after two appends.
         // After create:  tail_0 = [0;32], entry_0 = [0;32]
@@ -800,12 +856,25 @@ mod tests {
             h.finalize().into()
         };
 
-        // Verify the second append's signature covers the chained tail.
         let instance_id = compute_config_id([vk].iter());
-        let message = receipts::build_append_entry_message(&instance_id, 1, &entry_b, 2, &tail_2);
 
-        vk.verify(&message, &sig)
-            .expect("second append_entry receipt must verify with chained tail");
+        // 1. Verify entry receipt covers chained tail.
+        let entry_message =
+            receipts::build_entry_receipt_message(&instance_id, 1, &entry_b, 2, &tail_2);
+        vk.verify(&entry_message, &result.entry_receipt)
+            .expect("second append_entry entry receipt must verify with chained tail");
+
+        // 2. Verify append receipt covers chained tail and nonce.
+        let append_message = receipts::build_append_receipt_message(
+            &instance_id,
+            1,
+            &entry_b,
+            2,
+            &tail_2,
+            test_nonce,
+        );
+        vk.verify(&append_message, &result.append_receipt)
+            .expect("second append_entry append receipt must verify with chained tail");
     }
 
     #[test]
@@ -825,11 +894,22 @@ mod tests {
         assert_eq!(result.entry, [0u8; 32]);
         assert_eq!(result.index, 0);
         assert_eq!(result.hash_chain_tail, [0u8; 32]);
-        assert_eq!(result.nonce, nonce);
 
-        // Verify the signature.
         let instance_id = compute_config_id([vk].iter());
-        let message = receipts::build_read_latest_message(
+
+        // 1. Verify entry receipt over initial state.
+        let entry_message = receipts::build_entry_receipt_message(
+            &instance_id,
+            ledger_id,
+            &result.entry,
+            result.index,
+            &result.hash_chain_tail,
+        );
+        vk.verify(&entry_message, &result.entry_receipt)
+            .expect("read_latest entry receipt must verify");
+
+        // 2. Verify read_latest receipt over initial state.
+        let read_message = receipts::build_read_latest_receipt_message(
             &instance_id,
             ledger_id,
             &result.entry,
@@ -837,9 +917,8 @@ mod tests {
             &result.hash_chain_tail,
             nonce,
         );
-
-        vk.verify(&message, &result.signature)
-            .expect("read_latest signature must verify");
+        vk.verify(&read_message, &result.read_receipt)
+            .expect("read_latest receipt must verify");
     }
 
     #[test]
@@ -853,16 +932,14 @@ mod tests {
         active.create_ledger(ledger_id).unwrap();
 
         let entry = [0xABu8; 32];
-        active.append_entry(ledger_id, entry, 1).unwrap();
+        active.append_entry(ledger_id, entry, 1, nonce()).unwrap();
 
         let nonce: u64 = 42;
         let result = active.read_latest(ledger_id, nonce).unwrap();
 
         assert_eq!(result.entry, entry);
         assert_eq!(result.index, 1);
-        assert_eq!(result.nonce, nonce);
 
-        // Verify the signature covers the latest state.
         let expected_tail: [u8; 32] = {
             let mut h = Sha256::new();
             h.update([0u8; 32]); // old tail
@@ -872,7 +949,20 @@ mod tests {
         assert_eq!(result.hash_chain_tail, expected_tail);
 
         let instance_id = compute_config_id([vk].iter());
-        let message = receipts::build_read_latest_message(
+
+        // 1. Verify entry receipt covers the latest state.
+        let entry_message = receipts::build_entry_receipt_message(
+            &instance_id,
+            ledger_id,
+            &entry,
+            1,
+            &expected_tail,
+        );
+        vk.verify(&entry_message, &result.entry_receipt)
+            .expect("read_latest entry receipt must verify after append");
+
+        // 2. Verify read_latest receipt covers the latest state + nonce.
+        let read_message = receipts::build_read_latest_receipt_message(
             &instance_id,
             ledger_id,
             &entry,
@@ -880,9 +970,8 @@ mod tests {
             &expected_tail,
             nonce,
         );
-
-        vk.verify(&message, &result.signature)
-            .expect("read_latest signature must verify after append");
+        vk.verify(&read_message, &result.read_receipt)
+            .expect("read_latest receipt must verify after append");
     }
 
     #[test]
@@ -893,7 +982,7 @@ mod tests {
             .activate(sorted_config(std::vec![vk]), None)
             .unwrap();
 
-        let err = active.read_latest(99, 0).unwrap_err();
+        let err = active.read_latest(99, nonce()).unwrap_err();
         assert_eq!(err.ledger_id, 99);
     }
 
@@ -1225,7 +1314,7 @@ mod tests {
             .unwrap();
 
         // Ledger 0 should exist with zero-state.
-        let result = active.read_latest(0, 0).unwrap();
+        let result = active.read_latest(0, nonce()).unwrap();
         assert_eq!(result.entry, [0u8; 32], "default ledger entry must be zero");
         assert_eq!(result.index, 0, "default ledger index must be 0");
         assert_eq!(
@@ -1349,12 +1438,12 @@ mod tests {
             .expect("should succeed");
 
         // Verify adopted ledger state via read_latest.
-        let block_0 = active.read_latest(0, 0).unwrap();
+        let block_0 = active.read_latest(0, nonce()).unwrap();
         assert_eq!(block_0.entry, [0xAAu8; 32]);
         assert_eq!(block_0.index, 5);
         assert_eq!(block_0.hash_chain_tail, [0xBBu8; 32]);
 
-        let block_42 = active.read_latest(42, 0).unwrap();
+        let block_42 = active.read_latest(42, nonce()).unwrap();
         assert_eq!(block_42.entry, [0xCCu8; 32]);
         assert_eq!(block_42.index, 10);
         assert_eq!(block_42.hash_chain_tail, [0xDDu8; 32]);
@@ -1362,7 +1451,7 @@ mod tests {
         assert_eq!(active.ledger_count(), 2);
 
         // Non-existent ledger should still fail.
-        assert!(active.read_latest(99, 0).is_err());
+        assert!(active.read_latest(99, nonce()).is_err());
     }
 
     #[test]
@@ -1522,7 +1611,7 @@ mod tests {
         // Create a ledger and append an entry so finalization covers
         // non-trivial state.
         active.create_ledger(1).unwrap();
-        active.append_entry(1, [0xABu8; 32], 1).unwrap();
+        active.append_entry(1, [0xABu8; 32], 1, nonce()).unwrap();
 
         let next_config = sorted_config(std::vec![
             *SigningKey::random(&mut rand_core::OsRng).verifying_key(),
