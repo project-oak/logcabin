@@ -40,6 +40,7 @@ use p256::ecdsa::Signature;
 /// look up each key in its trusted config, more expensive uniqueness checks,
 /// and moving more data (33 bytes per key per endorser) for each request. Key
 /// indices allow the same checks in O(n_endorsers) time without hash tables.
+#[derive(Debug)]
 pub struct LedgerReceipt {
     /// Index of the endorser's key within the [`CohortConfig`].
     pub key_index: usize,
@@ -67,6 +68,7 @@ impl Deref for LedgerReceipt {
 /// that's checked by the Verifier (e.g. [`Verifier::verify_read_latest`]), which
 /// has access to the [`CohortConfig`] and can safely allocate a bitmap
 /// for deduplication.
+#[derive(Debug)]
 pub struct LedgerReceipts {
     receipts: Vec<LedgerReceipt>,
 }

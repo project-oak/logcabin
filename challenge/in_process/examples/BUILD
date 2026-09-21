@@ -15,53 +15,42 @@
 #
 
 """
-This package provides the core Endorser functionality.
+Worked examples for the in-process split-view challenge.
+
+Kept in a crate of its own so that `#![forbid(unsafe_code)]` and this fixed
+dependency set apply to participant code and nothing else.
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(
-    default_visibility = [
-        "//challenge/in_process:__subpackages__",
-        "//endorser/service:__pkg__",
-        "//testing/protocol:__pkg__",
-    ],
+    default_visibility = ["//challenge:__subpackages__"],
     licenses = ["notice"],
 )
 
 rust_library(
-    name = "core",
+    name = "examples",
     srcs = [
-        "src/ledger.rs",
+        "src/cross_cohort_fork.rs",
+        "src/cross_ledger.rs",
+        "src/divergent_handover.rs",
+        "src/honest.rs",
         "src/lib.rs",
-        "src/takeover.rs",
+        "src/naive_fork.rs",
+        "src/noop.rs",
+        "src/rogue_cohort.rs",
     ],
-    crate_name = "logcabin_endorser_core",
+    crate_name = "logcabin_challenge_examples",
     deps = [
         "//base",
-        "@oak_crates_index//:p256",
-        "@oak_crates_index//:rand_core",
-        "@oak_crates_index//:sha2",
+        "//challenge/in_process",
+        "//endorser/core",
+        "//verifier/rust:verifier",
     ],
 )
 
 rust_test(
     name = "tests",
     size = "small",
-    crate = ":core",
-    deps = [
-        "@oak_crates_index//:rand_core",
-    ],
-)
-
-rust_test(
-    name = "integration_tests",
-    size = "small",
-    srcs = ["tests/lifecycle_tests.rs"],
-    deps = [
-        ":core",
-        "//base",
-        "@oak_crates_index//:p256",
-        "@oak_crates_index//:rand_core",
-    ],
+    crate = ":examples",
 )

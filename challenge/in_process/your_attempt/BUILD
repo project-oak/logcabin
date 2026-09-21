@@ -15,53 +15,32 @@
 #
 
 """
-This package provides the core Endorser functionality.
+Starter package for a new challenge attempt. Edit src/lib.rs; nothing here
+needs changing. The deps are deliberately wider than the empty body uses, so
+an attempt can reach for any of them without touching this file.
 """
 
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(
-    default_visibility = [
-        "//challenge/in_process:__subpackages__",
-        "//endorser/service:__pkg__",
-        "//testing/protocol:__pkg__",
-    ],
+    default_visibility = ["//challenge:__subpackages__"],
     licenses = ["notice"],
 )
 
 rust_library(
-    name = "core",
-    srcs = [
-        "src/ledger.rs",
-        "src/lib.rs",
-        "src/takeover.rs",
-    ],
-    crate_name = "logcabin_endorser_core",
+    name = "your_attempt",
+    srcs = ["src/lib.rs"],
+    crate_name = "logcabin_challenge_your_attempt",
     deps = [
         "//base",
-        "@oak_crates_index//:p256",
-        "@oak_crates_index//:rand_core",
-        "@oak_crates_index//:sha2",
+        "//challenge/in_process",
+        "//endorser/core",
+        "//verifier/rust:verifier",
     ],
 )
 
 rust_test(
     name = "tests",
     size = "small",
-    crate = ":core",
-    deps = [
-        "@oak_crates_index//:rand_core",
-    ],
-)
-
-rust_test(
-    name = "integration_tests",
-    size = "small",
-    srcs = ["tests/lifecycle_tests.rs"],
-    deps = [
-        ":core",
-        "//base",
-        "@oak_crates_index//:p256",
-        "@oak_crates_index//:rand_core",
-    ],
+    crate = ":your_attempt",
 )

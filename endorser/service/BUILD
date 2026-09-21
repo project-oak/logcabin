@@ -77,6 +77,7 @@ rust_library(
     crate_name = "logcabin_endorser_service",
     deps = [
         ":endorser_micro_rpc_service",
+        "//base",
         "//endorser/core",
         "@oak//micro_rpc",
         "@oak//oak_attestation_types",
@@ -96,6 +97,7 @@ rust_test(
     ],
     deps = [
         ":endorser_micro_rpc_service",
+        "//base",
         "//endorser/core",
         "@oak//micro_rpc",
         "@oak//oak_attestation_types",

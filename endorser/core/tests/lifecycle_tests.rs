@@ -19,9 +19,8 @@
 //! These tests exercise multi-endorser, multi-state workflows through the
 //! public API only.
 
-use logcabin_endorser_core::{
-    CohortConfig, CohortFinalization, CohortTakeOver, Endorser, EndorserData, Uninitialized,
-};
+use logcabin_base::{CohortConfig, CohortFinalization, EndorserData};
+use logcabin_endorser_core::{CohortTakeOver, Endorser, Uninitialized};
 use p256::ecdsa::VerifyingKey;
 
 /// Builds a `CohortConfig` from an unsorted list of verifying keys by
