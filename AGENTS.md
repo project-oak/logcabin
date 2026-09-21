@@ -57,6 +57,11 @@ The development environment is fully managed via Nix.
 - **Just** is used as a user-friendly command runner (analogous to `make`). Use the commands defined in the `justfile` for common development workflows.
 - This project does NOT use Cargo.
 
+## Version Control (Jujutsu vs. Git)
+- **Do not assume that the source control system is `git`**.
+- Always check first whether the workspace is a Jujutsu (`jj`) repository (e.g., check for a `.jj/` directory or run `jj status`).
+- If it is a `jj` repository, use `jj` commands (`jj status`, `jj diff`, `jj log`, etc.) rather than raw `git` commands, as running state-modifying `git` commands in a `jj` repository can corrupt or desynchronize the Jujutsu working copy.
+
 ---
 
 ## 📐 Key Design Patterns
