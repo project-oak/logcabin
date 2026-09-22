@@ -26,8 +26,8 @@
 //! through protobuf services. These tests cut away all the middleware to test
 //! the raw protocol.
 
-use logcabin_base::{CohortConfig, EndorserData, EntryContents};
-use logcabin_endorser_core::{Active, CohortFinalization, CohortTakeOver, Endorser, Uninitialized};
+use logcabin_base::{CohortConfig, CohortFinalization, EndorserData, EntryContents};
+use logcabin_endorser_core::{Active, CohortTakeOver, Endorser, Uninitialized};
 use logcabin_verifier::{CohortHandover, LedgerReceipt, LedgerReceipts, Verifier};
 
 // ---------------------------------------------------------------------------

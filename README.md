@@ -19,6 +19,20 @@ both be accepted as valid by relying parties. The only exceptions are
 physical-access attacks capable of extracting secrets directly from TEE memory —
 where TEE guarantees themselves are broken.
 
+### The Challenge
+
+Don't take that claim on trust — try to break it!
+
+[**The Split-View Challenge**](challenge/README.md) gives you direct control
+over a cohort of endorsers and a mechanical harness that checks whether you
+managed to produce two conflicting, verifiable views of the same ledger. Whether
+you find a genuine fork or a clever near-miss that becomes a new regression
+test, we'd love your contribution. Run `just challenge` to jump right in.
+
+If you find a genuine break, please report it via [`SECURITY.md`](SECURITY.md)
+rather than opening a public issue. For everything else,
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the CLA and pull request process.
+
 ## Architecture
 
 ```
@@ -100,6 +114,8 @@ endorser/
 testing/
 ├── protocol/     Integration tests exercising endorser and verifier together
 └── host_server/  gRPC testing server for local QEMU-based development
+challenge/
+└── in_process/   Public falsification challenge against the split-view claim
 ```
 
 - `base` contains shared types and receipt message builders used by both the
@@ -112,6 +128,7 @@ testing/
   attestation.
 - `endorser/enclave_app` wires everything together and runs on
   [Oak Restricted Kernel](https://github.com/project-oak/oak).
+- `challenge` invites anyone to falsify the security claim above.
 
 See each crate's README for details.
 

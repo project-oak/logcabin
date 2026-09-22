@@ -40,6 +40,7 @@ pub type EndorserActivation = EndorserData<Signature>;
 
 /// Cohort activation data: receipts from the incoming cohort confirming
 /// they have adopted the handed-over state.
+#[derive(Debug)]
 pub struct CohortActivation {
     /// Activation data from each endorser, in strict ascending
     /// SEC1-lexicographic order of their keys.
@@ -117,6 +118,7 @@ pub enum HandoverError {
 ///
 /// The verifier uses this to verify and evolve its trusted config. The
 /// instance ID is not included because the verifier already knows it.
+#[derive(Debug)]
 pub struct CohortHandover {
     /// Finalization receipts from the outgoing cohort.
     pub finalization: CohortFinalization,

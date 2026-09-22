@@ -49,7 +49,6 @@ pub use handover::{
     CohortActivation, CohortHandover, EndorserActivation, HandoverError, QuorumError,
 };
 pub use ledger_receipts::{LedgerReceipt, LedgerReceipts};
-pub use logcabin_base::{CohortFinalization, EndorserData, EndorserFinalization};
 
 // ---------------------------------------------------------------------------
 // Verifier
@@ -344,6 +343,7 @@ pub enum VerifyError {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
+    use logcabin_base::{EndorserData, EndorserFinalization};
     use p256::ecdsa::signature::Signer;
     use p256::ecdsa::{SigningKey, VerifyingKey};
 

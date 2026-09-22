@@ -45,7 +45,7 @@ format-all:
     done
 
 preupload: format-all test-all
-    echo "Preupload passed; remember to use jj squash && jj cr"
+    echo "Preupload passed; remember to use jj squash."
 
 # --- Shared helpers ---
 
@@ -78,6 +78,12 @@ export-enclave-app out_path:
 
 test-all:
     bazel test //...:all
+
+[doc("Run your split-view falsification attempt and all worked examples.")]
+challenge:
+    bazel test //challenge/...
+    @echo "--- your_attempt ---"
+    @bazel test //challenge/in_process/your_attempt:tests --test_output=all --noshow_progress --ui_event_filters=-info,-debug
 
 # --- Run recipes ---
 

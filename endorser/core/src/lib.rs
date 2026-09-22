@@ -30,13 +30,9 @@ extern crate alloc;
 mod ledger;
 mod takeover;
 
-use logcabin_base::receipts;
+use logcabin_base::{receipts, CohortConfig, ConfigId, EntryContents, LedgerBlock, Sha256Digest};
 
 pub use ledger::{AppendResult, Ledgers, ReadLatestResult};
-pub use logcabin_base::{
-    CohortConfig, CohortData, CohortFinalization, ConfigId, EndorserData, EndorserFinalization,
-    EntryContents, InvalidConfigError, LedgerBlock, Sha256Digest,
-};
 pub use takeover::CohortTakeOver;
 
 use alloc::boxed::Box;
@@ -49,11 +45,13 @@ use sha2::Sha256;
 // ---------------------------------------------------------------------------
 
 /// The endorser has been created but not yet activated with a cohort config.
+/// Do not implement `Clone` or `Copy` - that would copy its signing key.
 pub struct Uninitialized {
     signing_key: Box<SigningKey>,
 }
 
 /// The endorser is activated and actively serving.
+/// Do not implement `Clone` or `Copy` - that would copy its signing key.
 pub struct Active {
     /// The ECDSA signing key, heap-allocated to avoid copying.
     signing_key: Box<SigningKey>,
@@ -93,6 +91,8 @@ pub struct Finalized {
 ///
 /// The signing key is heap-allocated (`Box<SigningKey>`) so it is never
 /// copied — only the pointer is moved during state transitions.
+///
+/// Do not implement `Clone` or `Copy` - that would copy its signing key.
 pub struct Endorser<S> {
     /// Opaque identifier: first 8 bytes (big-endian u64) of
     /// SHA-256(SEC1 uncompressed verifying key).
@@ -525,7 +525,9 @@ extern crate std;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use logcabin_base::compute_config_id;
+    use logcabin_base::{
+        compute_config_id, CohortFinalization, EndorserData, EndorserFinalization,
+    };
     use p256::ecdsa::signature::Verifier;
     use sha2::Digest;
 

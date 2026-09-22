@@ -30,10 +30,12 @@ use endorser_micro_rpc_service::logcabin::proto::{
     Ledger as LedgerProto, LedgerBlock as LedgerBlockProto, ReadLatestResponse,
     UninitializedState as UninitializedStateProto, VerifyingKey as VerifyingKeyProto,
 };
+use logcabin_base::{
+    CohortConfig, CohortFinalization, ConfigId, EndorserData, EndorserFinalization, EntryContents,
+    InvalidConfigError, LedgerBlock, Sha256Digest,
+};
 use logcabin_endorser_core::{
-    Active, AppendResult, CohortConfig, CohortFinalization, CohortTakeOver, ConfigId, EndorserData,
-    EndorserFinalization, EntryContents, Finalized, InvalidConfigError, LedgerBlock, Ledgers,
-    ReadLatestResult, Sha256Digest, Uninitialized,
+    Active, AppendResult, CohortTakeOver, Finalized, Ledgers, ReadLatestResult, Uninitialized,
 };
 use micro_rpc::{Status, StatusCode};
 

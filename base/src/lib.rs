@@ -47,7 +47,7 @@ pub type EntryContents = [u8; 32];
 /// Per-endorser entry: a verifying key plus an optional attached datum.
 ///
 /// The type parameter `R` is the receipt type — typically a signature.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EndorserData<R> {
     /// Verifying key of the endorser.
     pub endorser_key: VerifyingKey,
@@ -79,7 +79,7 @@ pub struct EndorserData<R> {
 /// [`try_new`](CohortData::try_new) and cannot be violated afterward.
 /// It enables canonical config ID derivation (SHA-256 of the concatenated
 /// SEC1 keys) and O(log n) key lookups.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CohortData<R> {
     entries: Vec<EndorserData<R>>,
 }
@@ -210,7 +210,7 @@ pub struct LedgerBlock {
     pub entry: EntryContents,
     /// Index of the entry in the ledger.
     pub index: u64,
-    /// Hash chain tail.
+    /// Hash chain tail: SHA256(prev_tail || prev_entry).
     pub hash_chain_tail: Sha256Digest,
 }
 
