@@ -33,24 +33,12 @@ A first run should report the three targets passing, followed by
 `your_attempt` as `1 ignored`: the worked examples all pass, and the starter
 attempt stays skipped until you implement it.
 
-## What You're Attacking
-
-- A **ledger** is a hash chain of blocks. A block is `(entry, index,
-  hash_chain_tail)`, where the tail commits to everything before it.
-- **Endorsers** are TEE state machines that hold ledgers and sign **receipts**
-  over blocks. A **cohort** is the set of endorsers a verifier trusts.
-- A **`Verifier`** accepts a block only when a **strict majority** of its cohort
-  signed that same block; cohorts can be replaced through **handovers**.
-- A **view** is just a block some verifier was convinced of.
-
-So splitting the view means convincing two verifiers of two *different* blocks
-at the same index of the same ledger.
-
 ## Winning & Rules
 
 You **win** (`Outcome::SplitViewAchieved`) if you return two
 [`View`](in_process/src/lib.rs)s of the **same `ledger_id` and `index`** but 
-differ in `entry` or `hash_chain_tail`.
+differ in `entry` or `hash_chain_tail`, such that two verifiers built from the
+same initial config, and applying the handovers you supply, accept both views.
 
 - **In scope:** Anything reachable through the endorser Rust API. Own, mutate, or
   drop endorsers; send conflicting requests to different subsets; pick any
