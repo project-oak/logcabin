@@ -22,10 +22,12 @@
 //! to `C1`:
 //!
 //! 1. [`CyclicHandoverGenesisReplay`]: Reusing `C1`'s original genesis
-//!    `activation_receipt`s (`"activate_new_instance"`) as takeover activation
-//!    receipts for `C2 -> C1`. Stopped by domain separation in
-//!    `CohortHandover::verify` (`"activate"` vs `"activate_new_instance"`,
-//!    yielding `valid: 0, required: 2`).
+//!    `activation_receipt`s as takeover activation receipts for `C2 -> C1`.
+//!    Both kinds of activation receipt start with `"activate"`, but a genesis
+//!    receipt signs only `"activate" || instance_id`, while
+//!    `CohortHandover::verify` checks the takeover message, which also binds
+//!    `prev_config_id`, `new_config_id` and `ledgers_hash`. No genesis
+//!    signature verifies against it (`valid: 0, required: 2`).
 //! 2. [`CyclicHandoverHeldBackEndorser`]: Activating only a 2-of-3 quorum
 //!    (`[e0, e1]`) of `C1` at genesis while holding back `e2` as
 //!    `Endorser<Uninitialized>` until `C2` finalizes back toward `C1`. `e2`

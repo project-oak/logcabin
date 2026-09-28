@@ -158,10 +158,12 @@ alter signed receipt contents.
 The nonce-bound receipt is bound to the client's nonce, so a coordinator cannot
 replay a receipt issued for a _different_ nonce.
 
-> [!IMPORTANT] This guarantee is conditional. Clients **must** draw each nonce
-> independently at random from a large space (the full 64-bit range, from a
-> CSPRNG). Nonce uniqueness and unpredictability are load-bearing: the
-> anti-replay property above is void without them.
+> [!IMPORTANT]
+>
+> This guarantee is conditional. Clients **must** draw each nonce independently
+> at random from a large space (the full 64-bit range, from a CSPRNG). Nonce
+> uniqueness and unpredictability are load-bearing: the anti-replay property
+> above is void without them.
 
 **Why uniqueness is required.** The signed append message is
 

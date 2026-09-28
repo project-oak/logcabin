@@ -75,7 +75,8 @@ detected immediately.
 When the number of ledgers scales up, this can have a significant impact on the
 amount of data moved between cohorts for reconfiguration. Initializing and
 activating an endorser requires delivering _to each new endorser_, the data
-_from each ledger_, _from each old endorser_. Plus, the appends argument.
+_from each ledger_, _from each old endorser_ that finalized at a distinct state.
+Plus, the appends argument.
 
 The cohort is effectively unable to process requests (downtime):
 
@@ -101,10 +102,10 @@ starting to finalize any of them. This moves the linearization point to before
 the handover officially starts, and moves all the protocol complexity and code
 away from the trusted endorser, into the untrusted coordinator.
 
-Crucially, it reduces by an order of magnitude the amount of data transferred
-for activation: new endorsers only get 1 state, not _1 state per old endorser_.
-This enables scaling up the number of endorsers, which can be critical for
-reliability.
+Crucially, it reduces the amount of data transferred for activation: new
+endorsers receive the ledger tails exactly once, rather than up to _1 + n_old_
+times ([details](#operational-differences)). This enables scaling up the number
+of endorsers, which can be critical for reliability.
 
 The property that all new endorsers start from a valid and consistent state is
 achieved trivially: most old endorsers must have agreed on exactly that state.
@@ -154,12 +155,21 @@ running read_latest immediately after handover.
 
 ### Operational differences
 
-|                     | Nimble (3-phase)                                                                 | LogCabin (2-phase)                                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **Data transfer**   | O(new_endorsers × old_endorsers × n_ledgers)                                     | O(new_endorsers × (old_endorsers + n_ledgers))                                                                          |
-| **Downtime**        | `finalize + initialize + activate` RTTs                                          | Coordinator-driven linearization (pause writes, bring a majority of endorsers up to speed) + `finalize + activate` RTTs |
-| **Endorser states** | 4 (`Uninitialized → Initialized → Active → Finalized`)                           | 3 (`Uninitialized → Active → Finalized`)                                                                                |
-| **TCB size**        | Larger (linearization logic, computing max cut, processing appends, extra state) | Smaller (LogCabin core is ~500 lines of Rust excluding comments and tests)                                              |
+|                                                                                                                      | Nimble (3-phase)                                                                                               | LogCabin (2-phase)                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Finalization data** (worst case)                                                                                   | (1 + n_old) × n_ledgers ledger tails + n_old finalization receipts + n_old public keys + bridging block hashes | n_ledgers ledger tails + n_old finalization receipts + n_old public keys                                                |
+| **Handover data transfer** (worst case): finalization data + the new cohort's public keys, sent to each new endorser | O(n_new × (n_old × n_ledgers + n_new))                                                                         | O(n_new × (n_ledgers + n_old + n_new))                                                                                  |
+| **Downtime**                                                                                                         | `finalize + initialize + activate` RTTs                                                                        | Coordinator-driven linearization (pause writes, bring a majority of endorsers up to speed) + `finalize + activate` RTTs |
+| **Endorser states**                                                                                                  | 4 (`Uninitialized → Initialized → Active → Finalized`)                                                         | 3 (`Uninitialized → Active → Finalized`)                                                                                |
+| **TCB size**                                                                                                         | Larger (linearization logic, computing max cut, processing appends, extra state)                               | Smaller (LogCabin core is ~500 lines of Rust excluding comments and tests)                                              |
+
+> [!NOTE]
+>
+> **Nimble's finalization data** is at its largest when every old endorser
+> finalizes at a different state. Nimble de-duplicates equal finalized states,
+> so the ledger tails of endorsers that finalized at the same state are only
+> sent once, and the number of bridging block hashes depends on how many entries
+> apart the old endorsers' finalized states are.
 
 ## Unconditional appends
 
@@ -197,9 +207,10 @@ the full design and security analysis.
 
 #### Client requirement: nonces must be random and never reused
 
-> [!IMPORTANT] Clients **must** draw every nonce independently at random from a
-> CSPRNG over the full 64-bit range. This is load-bearing, not hygiene — the
-> replay protection above is void without it.
+> [!IMPORTANT]
+>
+> Clients **must** draw every nonce independently at random from a CSPRNG over
+> the full 64-bit range. This is required for replay protection.
 
 The nonce is signed alongside the entry, so reusing a
 `(ledger_id, entry, nonce)` triple turns an earlier append receipt into a valid

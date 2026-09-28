@@ -16,66 +16,129 @@
 
 # Agent Instructions (AGENTS.md)
 
-Welcome! This file provides critical architectural context, environment information, and instructions for AI coding agents working on the Oak Log Cabin project.
+Welcome! This file provides critical architectural context, environment
+information, and instructions for AI coding agents working on the Oak Log Cabin
+project.
 
 ---
 
 ## 🌲 The Oak Repository Dependency
 
-The Oak repository (`project-oak/oak`) is a major external dependency of this project. It contains core libraries, schemas, and runtime binaries (such as Stage 0, Restricted Kernel, the Orchestrator, and the Launcher) that this project depends on and integrates with.
+The Oak repository (`project-oak/oak`) is a major external dependency of this
+project. It contains core libraries, schemas, and runtime binaries (such as
+Stage 0, Restricted Kernel, the Orchestrator, and the Launcher) that this
+project depends on and integrates with.
 
 ### 🔍 How to Find the Oak Repository Path
-Because developers may checkout or cache the Oak repository in different locations, **never assume a hardcoded absolute path to Oak**.
-Instead, dynamically resolve the absolute path on the host by executing:
+
+Because developers may checkout or cache the Oak repository in different
+locations, **never assume a hardcoded absolute path to Oak**. Instead,
+dynamically resolve the absolute path on the host by executing:
 
 ```bash
 just oak-repo-path
 ```
 
 ### 📋 Using Oak Code & Examples
-Whenever prompt instructions, issue descriptions, or task requirements refer to patterns, code, tests, or examples from the Oak repository (e.g., remote attestation logic, serialization formats):
-1. **Locate the repository** using `just oak-repo-path`.
-2. **Read the corresponding files or directory structures** within that resolved directory.
-3. Do not try to guess or search online before checking the local Oak repository checkout.
 
-Specifically, when implementing **cryptographic functionalities**, always reference the Oak repository first. For example, before creating logic to sign a payload, locate the signing and key-provisioning implementations designed specifically for the Oak Restricted Kernel (e.g., searching for `InstanceSigner`).
+Whenever prompt instructions, issue descriptions, or task requirements refer to
+patterns, code, tests, or examples from the Oak repository (e.g., remote
+attestation logic, serialization formats):
+
+1. **Locate the repository** using `just oak-repo-path`.
+2. **Read the corresponding files or directory structures** within that resolved
+   directory.
+3. Do not try to guess or search online before checking the local Oak repository
+   checkout.
+
+Specifically, when implementing **cryptographic functionalities**, always
+reference the Oak repository first. For example, before creating logic to sign a
+payload, locate the signing and key-provisioning implementations designed
+specifically for the Oak Restricted Kernel (e.g., searching for
+`InstanceSigner`).
 
 ---
 
 ## 🛠️ Environment and Build System
 
-This project uses a deterministic Nix-based development environment and Bazel for builds.
+This project uses a deterministic Nix-based development environment and Bazel
+for builds.
 
 ### Nix Dev Shell
+
 The development environment is fully managed via Nix.
-- Before running bazel commands, or formatting tools, ensure you are operating within the Nix devShell.
+
+- Before running bazel commands, or formatting tools, ensure you are operating
+  within the Nix devShell.
 - To run a command under the Nix shell, use `nix develop --command $command`.
-- If using tools that execute commands, always verify if they run with Nix available.
+- If using tools that execute commands, always verify if they run with Nix
+  available.
 
 ### Bazel & Just
-- **Bazel** is the primary build tool for compiling Rust targets, enclave applications, and protobuf files.
-- **Just** is used as a user-friendly command runner (analogous to `make`). Use the commands defined in the `justfile` for common development workflows.
+
+- **Bazel** is the primary build tool for compiling Rust targets, enclave
+  applications, and protobuf files.
+- **Just** is used as a user-friendly command runner (analogous to `make`). Use
+  the commands defined in the `justfile` for common development workflows.
 - This project does NOT use Cargo.
 
 ## Version Control (Jujutsu vs. Git)
+
 - **Do not assume that the source control system is `git`**.
-- Always check first whether the workspace is a Jujutsu (`jj`) repository (e.g., check for a `.jj/` directory or run `jj status`).
-- If it is a `jj` repository, use `jj` commands (`jj status`, `jj diff`, `jj log`, etc.) rather than raw `git` commands, as running state-modifying `git` commands in a `jj` repository can corrupt or desynchronize the Jujutsu working copy.
+- Always check first whether the workspace is a Jujutsu (`jj`) repository (e.g.,
+  check for a `.jj/` directory or run `jj status`).
+- If it is a `jj` repository, use `jj` commands (`jj status`, `jj diff`,
+  `jj log`, etc.) rather than raw `git` commands, as running state-modifying
+  `git` commands in a `jj` repository can corrupt or desynchronize the Jujutsu
+  working copy.
 
 ---
 
 ## 📐 Key Design Patterns
 
 ### `no_std` Compatibility
-The entire enclave app, including `endorser/core`, `endorser/service`, and `endorser/enclave_app` is designed for  restricted execution environments (specifically Oak's Restricted Kernel) and must remain **`no_std` compatible**.
+
+The entire enclave app, including `endorser/core`, `endorser/service`, and
+`endorser/enclave_app` is designed for restricted execution environments
+(specifically Oak's Restricted Kernel) and must remain **`no_std` compatible**.
+
 - Do not import standard library components (`std::*`) inside the core crate.
 - Rely on `core::*` and `alloc::*` for memory and primitive management.
 
 ---
 
+## 📖 Protocol Specification
+
+[`docs/protocol.md`](docs/protocol.md) is the specification of the LogCabin
+protocol and data model. Keep it accurate whenever you change code or
+documentation:
+
+- **Code changes.** Any change that affects protocol behaviour must update
+  `docs/protocol.md` in the same change. This includes receipt formats
+  (`base/src/receipts.rs`), identifiers and encodings, the endorser state
+  machine and handover logic (`endorser/core`), verification rules
+  (`verifier/rust`), wire types and RPCs (`endorser/service/*.proto`), limits
+  (`MAX_*` constants), and the coordinator's responsibilities.
+- **Documentation changes.** Other documents that describe the protocol — the
+  top-level `README.md`, `endorser/core/README.md`,
+  `docs/unconditional_appends.md`, and the challenge docs — must stay consistent
+  with `docs/protocol.md`. When editing either side, check the other and fix
+  whichever is out of date.
+- **Disagreements.** For the byte strings that endorsers sign and verifiers
+  check, the Rust implementation in `base/src/receipts.rs` is authoritative.
+  Where the code and the specification disagree in any other way, flag the
+  discrepancy to the user rather than silently picking one.
+- **Describe the protocol, not the project status.** Don't add work-in-progress
+  notes to `docs/protocol.md`.
+- **Keep it navigable.** When sections are renumbered, update the `§` links and
+  their anchors, and check that the Mermaid diagrams still render.
+
+---
+
 ## 📝 Copyright Notice
 
-All source files must contain a copyright notice in the correct format for that file type.
+All source files must contain a copyright notice in the correct format for that
+file type.
 
 Here is an example of the notice format (from the top-level `BUILD` file):
 
