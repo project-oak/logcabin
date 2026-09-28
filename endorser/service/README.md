@@ -1,7 +1,7 @@
 # Endorser Service
 
-The endorser service crate implements the `EndorserService` interface defined
-in `endorser_service.proto` as a MicroRPC service. It wraps the core LogCabin
+The endorser service crate implements the `EndorserService` interface defined in
+`endorser_service.proto` as a MicroRPC service. It wraps the core LogCabin
 endorser protocol (from `endorser/core`) and runs inside an Oak Restricted
 Kernel enclave application.
 
@@ -19,7 +19,7 @@ Responsibilities:
   cohort or instance. Tracks endorsers across all lifecycle states
   (uninitialized, active, finalized).
 - **Crash recovery**: allows retrieval of activation and finalization receipts
-  via `GetEndorser`, and retains a bounded queue of recently finalized
-  endorsers so that receipts lost to coordinator crashes can be recovered.
+  via `GetEndorser`, and retains a bounded queue of recently finalized endorsers
+  so that receipts lost to coordinator crashes can be recovered.
 - **Defence-in-depth constraints**: enforces limits on the number of endorsers,
   ledgers, and cohort size to keep memory and CPU use bounded.

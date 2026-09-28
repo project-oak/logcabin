@@ -14,4 +14,5 @@
   limitations under the License.
 -->
 
-See [`../README.md`](../README.md) for the challenge documentation and instructions.
+See [`../README.md`](../README.md) for the challenge documentation and
+instructions.

@@ -29,19 +29,19 @@ just challenge
 Needs Nix, Bazel, and a [Project Oak](https://github.com/project-oak/oak)
 checkout at `../oak` — see [prerequisites](../README.md#prerequisites).
 
-A first run should report the three targets passing, followed by
-`your_attempt` as `1 ignored`: the worked examples all pass, and the starter
-attempt stays skipped until you implement it.
+A first run should report the three targets passing, followed by `your_attempt`
+as `1 ignored`: the worked examples all pass, and the starter attempt stays
+skipped until you implement it.
 
 ## Winning & Rules
 
 You **win** (`Outcome::SplitViewAchieved`) if you return two
-[`View`](in_process/src/lib.rs)s of the **same `ledger_id` and `index`** but 
+[`View`](in_process/src/lib.rs)s of the **same `ledger_id` and `index`** but
 differ in `entry` or `hash_chain_tail`, such that two verifiers built from the
 same initial config, and applying the handovers you supply, accept both views.
 
-- **In scope:** Anything reachable through the endorser Rust API. Own, mutate, or
-  drop endorsers; send conflicting requests to different subsets; pick any
+- **In scope:** Anything reachable through the endorser Rust API. Own, mutate,
+  or drop endorsers; send conflicting requests to different subsets; pick any
   nonces; chain handovers across cohorts (including cohorts built from endorsers
   you created yourself — the verifier performs no attestation checks); forge or
   replay receipts.
@@ -50,9 +50,9 @@ same initial config, and applying the handovers you supply, accept both views.
   private keys are isolated from the host. Every challenge crate enforces
   `#![forbid(unsafe_code)]`.
 
-Tip: If your two views end up at different indices, bring them to a common one: the
-timeless `Verification::Entry` can request any index a cohort still holds, and a
-live cohort can always be advanced with another append.
+Tip: If your two views end up at different indices, bring them to a common one:
+the timeless `Verification::Entry` can request any index a cohort still holds,
+and a live cohort can always be advanced with another append.
 
 ## In-Process Challenge (`in_process/`)
 
@@ -64,8 +64,8 @@ and drive them with plain Rust function calls.
 
 That is intentional: **the service layer provides zero security guarantees.**
 All split-view resistance comes from the core endorser state machine and the
-verifier's quorum rules. A future `over_grpc/` challenge will expose the
-network layer for any-language testing.
+verifier's quorum rules. A future `over_grpc/` challenge will expose the network
+layer for any-language testing.
 
 ### How It Works
 
@@ -121,13 +121,15 @@ Key properties:
   verification accept different blocks at the same ledger and index.
 - **Your choice of cohort size:** Override `cohort_size` if your attempt needs a
   specific shape (see
-  [`divergent_handover`](in_process/examples/src/divergent_handover.rs)). Only the initial cohort
-  is affected — successor cohorts you build yourself can be any size.
-- **Verification:** The harness constructs both `Verifier`s itself from
-  the initial config and evolves them strictly via `apply_handover`. You can
-  still instantiate your own `Verifier` inside `attempt` to pre-check your views.
+  [`divergent_handover`](in_process/examples/src/divergent_handover.rs)). Only
+  the initial cohort is affected — successor cohorts you build yourself can be
+  any size.
+- **Verification:** The harness constructs both `Verifier`s itself from the
+  initial config and evolves them strictly via `apply_handover`. You can still
+  instantiate your own `Verifier` inside `attempt` to pre-check your views.
 
 > [!IMPORTANT]
+>
 > Endorsers are handed to you sorted by SEC1 verifying-key bytes, where
 > `endorsers[i]` corresponds to `key_index == i` in the verifier's config. Keep
 > them in that order when building `LedgerReceipt`s.
@@ -157,10 +159,10 @@ impl Falsifier for Noop {
 }
 ```
 
-[`logcabin_challenge::util`](in_process/src/util.rs) contains optional
-helpers for driving endorsers - they use the same API you have. Each fallible
-helper comes in two flavours: `foo` returns a `Result` you can inspect, and
-`must_foo` panics on failure.
+[`logcabin_challenge::util`](in_process/src/util.rs) contains optional helpers
+for driving endorsers - they use the same API you have. Each fallible helper
+comes in two flavours: `foo` returns a `Result` you can inspect, and `must_foo`
+panics on failure.
 
 ### Examples
 
@@ -168,15 +170,15 @@ Seven worked attempts live in
 [`in_process/examples/src/`](in_process/examples/src/). All of them fail — each
 asserts the exact outcome it produces, so they double as regression tests.
 
-| Example | Attack Idea | Result |
-|---|---|---|
-| [`noop`](in_process/examples/src/noop.rs) | Minimal template returning empty receipts. | `ViewRejected(NoReceipts)` |
-| [`honest`](in_process/examples/src/honest.rs) | End-to-end smoke test: append once, then read it back via `ReadLatest` and via `Entry`. | `ViewsAgree` |
-| [`cross_ledger`](in_process/examples/src/cross_ledger.rs) | Append different entries to two ledgers at the same index. | `NotAFork(DifferentLedger)` |
-| [`naive_fork`](in_process/examples/src/naive_fork.rs) | Append `X` to 2 endorsers and `Y` to the 3rd. | `ViewRejected(QuorumNotMet)` |
-| [`cross_cohort_fork`](in_process/examples/src/cross_cohort_fork.rs) | Compare cohort `N` against cohort `N+1` after handover. | `ViewsAgree` |
+| Example                                                               | Attack Idea                                                                                     | Result                                       |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| [`noop`](in_process/examples/src/noop.rs)                             | Minimal template returning empty receipts.                                                      | `ViewRejected(NoReceipts)`                   |
+| [`honest`](in_process/examples/src/honest.rs)                         | End-to-end smoke test: append once, then read it back via `ReadLatest` and via `Entry`.         | `ViewsAgree`                                 |
+| [`cross_ledger`](in_process/examples/src/cross_ledger.rs)             | Append different entries to two ledgers at the same index.                                      | `NotAFork(DifferentLedger)`                  |
+| [`naive_fork`](in_process/examples/src/naive_fork.rs)                 | Append `X` to 2 endorsers and `Y` to the 3rd.                                                   | `ViewRejected(QuorumNotMet)`                 |
+| [`cross_cohort_fork`](in_process/examples/src/cross_cohort_fork.rs)   | Compare cohort `N` against cohort `N+1` after handover.                                         | `ViewsAgree`                                 |
 | [`divergent_handover`](in_process/examples/src/divergent_handover.rs) | On a non-default 5-endorser cohort, finalize 3 endorsers toward successor `P` and 2 toward `Q`. | `HandoverRejected(FinalizationQuorumNotMet)` |
-| [`rogue_cohort`](in_process/examples/src/rogue_cohort.rs) | Hand over to a challenger-created cohort and append. | `NotAFork(DifferentIndex)` |
+| [`rogue_cohort`](in_process/examples/src/rogue_cohort.rs)             | Hand over to a challenger-created cohort and append.                                            | `NotAFork(DifferentIndex)`                   |
 
 Activation creates ledger `0` only; `cross_ledger` and `cross_cohort_fork` show
 how to create and use other ledger IDs.
@@ -188,11 +190,12 @@ reports `Outcome::SplitViewAchieved`.
 
 ## Submitting
 
-1. Implement `attempt()` in [`in_process/your_attempt/`](in_process/your_attempt/)
-   and remove the `#[ignore]` from its test.
+1. Implement `attempt()` in
+   [`in_process/your_attempt/`](in_process/your_attempt/) and remove the
+   `#[ignore]` from its test.
 2. Run `just challenge`.
 3. **If you found a genuine break**, do not open a public issue — follow
    [`SECURITY.md`](../SECURITY.md) so we can coordinate disclosure.
-4. **Otherwise**, send us the attempt: see [`CONTRIBUTING.md`](../CONTRIBUTING.md)
-   for the CLA and pull request process. Even failed but interesting attempts are
-   valuable regression tests!
+4. **Otherwise**, send us the attempt: see
+   [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the CLA and pull request process.
+   Even failed but interesting attempts are valuable regression tests!
