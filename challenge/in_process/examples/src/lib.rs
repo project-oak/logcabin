@@ -23,6 +23,7 @@
 
 pub mod cross_cohort_fork;
 pub mod cross_ledger;
+pub mod cyclic_handover;
 pub mod divergent_handover;
 pub mod honest;
 pub mod naive_fork;

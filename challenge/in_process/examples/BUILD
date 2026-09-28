@@ -33,6 +33,7 @@ rust_library(
     srcs = [
         "src/cross_cohort_fork.rs",
         "src/cross_ledger.rs",
+        "src/cyclic_handover.rs",
         "src/divergent_handover.rs",
         "src/honest.rs",
         "src/lib.rs",
