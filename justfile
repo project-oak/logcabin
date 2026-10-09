@@ -43,6 +43,7 @@ format-all:
     for proto in $(find . -type f -name '*.proto' -not -path './bazel-*' -not -path './.*'); do
         buf format -w "$proto"
     done
+    prettier --write --log-level warn $(find . -type f -name '*.md' -not -path './bazel-*' -not -path './.*')
 
 preupload: format-all test-all
     echo "Preupload passed; remember to use jj squash."
