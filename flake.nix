@@ -104,7 +104,9 @@
             };
             # By default create a shell with all the inputs.
             default = pkgs.mkShell {
-              packages = [ ];
+              packages = [
+                pkgs.prettier # Markdown formatter, used by `just format-all`.
+              ];
               inputsFrom = [
                 rust
                 bazelShell
